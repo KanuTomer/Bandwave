@@ -37,8 +37,10 @@ function Get-TaskNugetPackage([string]$Id,[string]$Version,[string]$Folder) {
     $taskNugetRoot=Join-Path $taskRoot '.deps\nuget'
     $taskDestination=Join-Path $taskNugetRoot $Folder
     if(Test-Path -LiteralPath (Join-Path $taskDestination "$Id.nuspec")){return}
-    New-Item -Path $taskNugetRoot -ItemType Directory -Force | Out-Null
     $taskArchive=Join-Path $taskNugetRoot "$Folder.nupkg"
+    # Nested folders (winappsdk-2.5.1\<id>) need their parent before the download; a clean CI
+    # checkout has none of it.
+    New-Item -Path (Split-Path $taskArchive -Parent) -ItemType Directory -Force | Out-Null
     $taskLower=$Id.ToLowerInvariant()
     Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/$taskLower/$Version/$taskLower.$Version.nupkg" -OutFile $taskArchive
     # Windows PowerShell 5 Expand-Archive rejects the .nupkg extension.
