@@ -1,103 +1,91 @@
-# Earbud Controls for Windows
+# Sound Connect
 
-A Windows 11 app and Win + W widget for Sony WF-C710N: batteries, noise cancelling, ambient
-sound, your EQ library, Find your EQ and Clear Bass. Independent project; not affiliated with Sony
-or Microsoft. Project source is MIT licensed.
+**Sound Connect** is a Windows 11 app and Win + W widget for Sony **WF-C710N** earbuds. It lets
+you check the batteries, switch noise cancelling and ambient sound, and shape the sound with
+your own EQs, without reaching for your phone.
+
+![Sound Connect's main screen: sound waves that move with your music, battery levels, the three sound modes and six EQs](docs/images/main.png)
+
+## What it does
+
+- **See everything at a glance:** left, right and case batteries, and whether each earbud is
+  connected.
+- **Switch sound modes instantly:** Noise cancelling, Ambient or Off. The waves on the main
+  screen take the shape of the mode and glow softly in time with your music.
+- **Keep an EQ library:** Sony's presets, with their real curves read from your earbuds, plus
+  as many of your own EQs as you like. Six of them sit on the main screen, one tap away.
+- **Edit with Sony's own controls:** five bands from 400 Hz to 16 kHz, plus Clear Bass. Changes
+  play on your earbuds as you make them. Hold to compare against how it sounded before, and
+  undo any step.
+- **Find your EQ by ear:** three quick A/B rounds (low end, vocals, upper range) build an EQ
+  from what you hear, not from numbers.
+- **Take two EQs with you:** keep any EQ in the earbuds' Custom 1 and Custom 2 slots, for your
+  phone and other devices. What's already in those slots is imported the first time you connect.
+- **Change your earbuds' settings:** Bluetooth priority, DSEE, ambient level, voice focus, voice
+  guidance, touch controls, the noise cycle and power options. Only the settings your earbuds
+  support are shown.
+- **Use the widget:** batteries, sound mode and your six main EQs in Win + W, without opening
+  the app.
+- **Keep it in the tray** when the window is closed, if you like.
+
+| Edit an EQ | Find your EQ | Your EQs |
+|---|---|---|
+| ![The EQ editor: a curve across five bands from 400 Hz to 16 kHz, with Clear Bass below](docs/images/editor.png) | ![Find your EQ: choosing between two versions of the low end](docs/images/find-your-eq.png) | ![The EQ library: two EQs on the earbuds, six on the main screen, and everything else](docs/images/library.png) |
 
 ## Install
 
-Download **EarbudControls-Setup-0.5.9.exe** from
-[Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the app and
-the widget together. No compiler, ZIP or source checkout is needed.
+1. Turn on **Developer Mode** in Windows Settings > System > For developers. Windows only shows
+   widgets from apps outside the Microsoft Store when it's on.
+2. Pair your WF-C710N in Windows Bluetooth settings.
+3. Download **EarbudControls-Setup-0.5.9.exe** from
+   [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
+   app and the widget together.
+4. Open **Sound Connect** from Start. To add the widget, open Win + W, choose Add widgets, then
+   **WF-C710N**.
 
-Requirements: Windows 11 x64 (build 22621+), Windows Web Experience Pack, and Developer Mode on in
-Windows Settings > System > For developers. Windows only shows widgets from apps outside the
-Microsoft Store when Developer Mode is on; setup checks this and explains how to turn it on. Other
-models and ARM64 are unverified. Pair and connect WF-C710N in Windows Bluetooth settings first.
+**Requirements:** Windows 11 x64, version 22H2 or newer, with the Windows Web Experience Pack
+(for Widgets). Other earbud models and ARM64 PCs aren't supported.
 
-The free release is signed with a local certificate. The first install asks for administrator
-permission once, only to trust that certificate; everything else runs as you. Setup includes the
-Microsoft-signed Windows App Runtime 2.5.1 and installs it only if it is missing. It does not
-disable SmartScreen, change PowerShell policy, pair devices or change earbud settings. Windows
-download and reputation prompts may still appear. The certificate expires 17 October 2027.
+**About the certificate:** Sound Connect is signed with the project's own certificate. The
+first install asks for administrator permission once, only to trust that certificate; nothing
+else runs as administrator. Windows SmartScreen may still warn the first time you download it.
+Setup also installs Microsoft's Windows App Runtime if your PC doesn't already have it.
 
-Open **Earbud Controls** from Start. Add the widget from Win + W > Add widgets > **WF-C710N**.
+## Updates
 
-- The app: batteries, sound modes, your EQ library with six EQs on the main screen, the EQ editor
-  (five bands from 400 Hz to 16 kHz, plus Clear Bass), Find your EQ, and two EQs kept on the
-  earbuds' Custom 1 and Custom 2 for your phone or other devices.
-- The widget: batteries, the three sound modes and, on Medium and Large, your six main-screen EQs.
-- Choosing a Sony preset selects it on the earbuds. Your own EQs are written to the earbuds'
-  Manual slot. On the first connection the app imports what is already in Custom 1 and Custom 2.
+Sound Connect checks for a new version once a day. When one is out, choose **Update** in the
+title bar: it downloads, checks the file's checksum and signature, and updates in place,
+keeping your EQs and settings. You can turn the check off in Settings > App and widget. Running
+a newer setup yourself works the same way.
 
-## Updates and uninstall
+## Uninstall
 
-The app checks this project's GitHub Releases once a day (Settings > App and widget lets you turn
-this off; nothing about you is sent). When a newer version is out, choose **Update** in the title
-bar. The update is installed only after its checksum and signature are verified, and your EQs and
-settings stay. Running a newer setup yourself does the same.
+Go to Windows Settings > Apps > Installed apps > **Sound Connect** > Uninstall. It asks whether
+to remove your EQs and settings too, and keeps them unless you say so. Uninstalling never
+changes your Bluetooth pairing or anything stored on the earbuds.
 
-EQs and settings are kept in `%LOCALAPPDATA%\Earbud Controls`. Uninstall from Settings > Apps >
-Installed apps > **Earbud Controls** (the entry setup adds): it asks whether to remove your EQs
-and settings too, and keeps them unless you say so. Removing the Windows package entry instead
-always keeps them. Neither removes Bluetooth pairing, shared Microsoft runtimes or anything stored
-on the earbuds. To remove certificate trust, an administrator can remove only thumbprint
-458DC5875423917D74F77A536EBBB42720D1B67A from Local Computer > Trusted People.
+## Privacy
 
-A ZIP with Install.cmd remains available as a fallback for each release.
+Sound Connect has no account and sends no telemetry. Your EQs and settings stay on your PC, in
+`%LOCALAPPDATA%\Earbud Controls`. The only network request is the optional daily update check
+to this project's GitHub Releases, which sends nothing about you.
 
-## Build and test
+## Build from source
 
-Windows x64, Git, Visual Studio 2022 C++ Build Tools, Windows SDK 10.0.26100 and
-CMake 3.31+ are required. In Windows PowerShell from the repository:
+You need Windows x64, Git, Visual Studio 2022 C++ Build Tools, Windows SDK 10.0.26100 and
+CMake 3.31 or newer. In Windows PowerShell, from the repository folder:
 
 ```powershell
-./scripts/build.ps1 -Check   # owner, widget, app (EarbudControls.UI.exe) and tests
-./tests/install_tests.ps1
+./scripts/build.ps1 -Check   # builds the app, widget and owner process, and runs the tests
+./tests/install_tests.ps1    # checks the installer without installing anything
 ```
 
-Bootstrap fetches pinned SonyHeadphonesClient revision
-`b98309446e2aff7538959eb6518ab694c5264cbe`, applies the WF-C710N EQ-notification
-compatibility patch idempotently, downloads pinned Widgets/C++/WinRT packages and
-generates build-time projections. Existing incompatible dependencies are left
-untouched. CI uses windows-2025 and publishes unsigned debugging builds only.
+The build downloads pinned versions of its dependencies: the
+[SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) engine, the Windows App
+SDK and C++/WinRT.
 
-The production manifest is the authoritative version. Maintainers sign locally;
-no private key is uploaded to GitHub or CI. To package an explicitly approved UI:
+## License
 
-```powershell
-# Build the demo provider and prepare review files without registering an app.
-./scripts/register-ui-review.ps1 -PrepareOnly
-./scripts/prepare-release.ps1 -UserApprovedUi
-```
-
-Use `-UserApprovedUi` only after actual human approval of the current UI. It records
-that approval separately from automated native visual checks. The default packaging
-gate still requires native review evidence. The development certificate is local
-and non-exportable; a new maintainer cannot sign releases with the original key.
-The installer pins the original public certificate thumbprint.
-
-For a read-only setup check, run the extracted release helper with `-PackagePath`
-and `-CheckOnly`. Existing `-Version` and `-TrustCertificate` options remain available
-in the source installer. `scripts/reset-local-install.ps1` is a maintainer-only,
-version-specific cleanup tool: it defaults to preview, requires a rollback backup
-to execute, and refuses unexpected identities and reparse-point traversal.
-
-## Testing limits and privacy
-
-Noise control, presets, EQ writes and restoration were historically verified on
-physical WF-C710N firmware 1.0.5. Passing CI does not establish UI acceptance,
-Bluetooth reliability, gaming performance or a fresh-machine installation pass.
-This release remains a prerelease until the friend-machine flow is verified.
-
-Runtime state may include the selected Bluetooth address, firmware, cached readings,
-preferences and your EQ library. It stays in `%LOCALAPPDATA%\Earbud Controls` and is excluded from
-the repository and release. Do not attach raw state or diagnostic logs to public issues.
-No telemetry or cloud account is required. The only network request is the optional daily
-update check to GitHub Releases.
-
-## Third-party software
-
-See [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) and the full license copies
-included in the release. Microsoft's redistributable packages retain their own
-license terms; this project's MIT license does not replace them.
+Sound Connect is an independent project, not affiliated with Sony or Microsoft. Its source is
+MIT licensed. See [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) for the open-source
+components it uses; Microsoft's redistributable packages keep their own license terms.
