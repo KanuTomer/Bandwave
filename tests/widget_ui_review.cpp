@@ -11,12 +11,14 @@
 namespace wp=winrt::Microsoft::Windows::Widgets::Providers;
 static constexpr GUID ReviewClsid{0xae7791c6,0x45cd,0x4a7f,{0xb2,0x7f,0x53,0xd2,0xac,0x70,0x10,0x60}};
 static HANDLE stop_review{};
-struct ReviewRecord {WidgetSize size=WidgetSize::Large;WidgetView view;};
+struct ReviewRecord {WidgetSize size=WidgetSize::Large;};
 struct Review {
     std::recursive_mutex mutex;
     Snapshot state;
     WidgetIcons icons;
-    bool logging{},high_contrast{};
+    bool high_contrast{};
+    // Sample main-screen EQs, as an app library would order them. The first two are personal.
+    std::vector<WidgetEq> eqs{{1,"Custom 2 (earbuds)",true},{2,"Custom 1 (earbuds)",false},{3,"Off",false},{4,"Bright",false},{5,"Excited",false},{6,"Mellow",false}};
     std::map<std::wstring,ReviewRecord> records;
     Review(){
         state.ready=state.fresh=state.noise_supported=state.ambient_supported=state.eq_supported=true;
@@ -35,30 +37,13 @@ struct Review {
         for(int i=0;i<3;++i)icons.batteries[i]={battery_image(state.batteries[i],i==2,false,high),battery_image(state.batteries[i],i==2,true,high)};
         icons.marker={selection_marker(false,high),selection_marker(true,high)};
         icons.border={border_image(false,high),border_image(true,high)};icons.surface={button_surface(false,high),button_surface(true,high)};
-        for(int i=0;i<2;++i)icons.switches[i]={switch_image(i!=0,false,high),switch_image(i!=0,true,high)};
-        refresh_curves();
     }
-    void refresh_curves(){icons.curves=curve_artwork(state.bands,high_contrast);icons.curve_light=icons.curves["large"].first;icons.curve_dark=icons.curves["large"].second;}
-    void update(const std::wstring& id){auto& record=records.at(id);wp::WidgetUpdateRequestOptions request(id);request.Template(winrt::to_hstring(make_card(state,record.size,record.view,icons,logging)));request.Data(L"{}");wp::WidgetManager::GetDefault().UpdateWidget(request);}
+    void update(const std::wstring& id){auto& record=records.at(id);wp::WidgetUpdateRequestOptions request(id);request.Template(winrt::to_hstring(make_card(state,record.size,eqs,icons)));request.Data(L"{}");wp::WidgetManager::GetDefault().UpdateWidget(request);}
     void context(wp::WidgetContext const& context){auto id=std::wstring(context.Id());records[id].size=context.Size();update(id);}
     void action(const std::wstring& id,const std::wstring& verb){
-        if(!widget_eq_action_allowed(records.at(id).size,verb))return;
-        auto& view=records.at(id).view;
-        if(!navigate_widget(view,verb)){
-            if(auto command=eq_command(view,state,verb)){
-                if(!view.baseline&&(command->operation==Operation::Bands||command->operation==Operation::Bass))view.baseline=EqBaseline{state.preset,state.bass,state.bands};
-                if(command->operation==Operation::Preset){state.preset=command->value;view.baseline.reset();state.bands=state.preset==26?std::vector<int32_t>{1,0,1,2,3}:std::vector<int32_t>{0,0,0,0,0};state.bass=state.preset==26?4:0;}
-                else if(command->operation==Operation::Bands)state.bands=command->bands;
-                else if(command->operation==Operation::Bass)state.bass=command->value;
-                else if(command->operation==Operation::Reset){state.bands=command->bands;state.bass=command->bass;}
-                if(view.page==WidgetPage::Presets)view.page=WidgetPage::Equalizer;refresh_curves();
-            }else if(suffix_number(verb,L"eq.preset.")==static_cast<int>(state.preset)&&view.page==WidgetPage::Presets)view.page=WidgetPage::Equalizer;
-            else if(verb==L"noise.anc"||verb==L"noise.ambient"||verb==L"noise.off"){state.noise=verb==L"noise.anc"?1:verb==L"noise.ambient"?2:0;if(view.page==WidgetPage::Noise)view.page=WidgetPage::Home;}
-            else if(verb==L"ambient.up"||verb==L"ambient.down")state.ambient=std::clamp(state.ambient+(verb==L"ambient.up"?1:-1),1,20);
-            else if(verb==L"ambient.voice")state.voice=state.voice==1?0:1;
-            else if(verb==L"pref.release")state.release_when_hidden=!state.release_when_hidden;
-            else if(verb==L"pref.logging")logging=!logging;
-        }
+        if(!widget_action_allowed(records.at(id).size,verb))return;
+        if(auto chosen=suffix_number(verb,L"eq.profile.");chosen>0)for(auto& eq:eqs)eq.selected=static_cast<int>(eq.id)==chosen;
+        else if(verb==L"noise.anc"||verb==L"noise.ambient"||verb==L"noise.off")state.noise=verb==L"noise.anc"?1:verb==L"noise.ambient"?2:0;
         update(id);
     }
 };
@@ -68,7 +53,7 @@ struct ReviewProvider:winrt::implements<ReviewProvider,wp::IWidgetProvider,wp::I
     void DeleteWidget(winrt::hstring const& id,winrt::hstring const&){std::lock_guard lock(review.mutex);review.records.erase(std::wstring(id));}
     void OnActionInvoked(wp::WidgetActionInvokedArgs args){std::lock_guard lock(review.mutex);try{review.action(std::wstring(args.WidgetContext().Id()),std::wstring(args.Verb()));}catch(...) {}}
     void OnWidgetContextChanged(wp::WidgetContextChangedArgs args){std::lock_guard lock(review.mutex);review.context(args.WidgetContext());}
-    void OnCustomizationRequested(wp::WidgetCustomizationRequestedArgs args){std::lock_guard lock(review.mutex);auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto& record=review.records[id];record.size=context.Size();record.view.page=WidgetPage::More;record.view.details_page=0;review.update(id);}
+    void OnCustomizationRequested(wp::WidgetCustomizationRequestedArgs args){std::lock_guard lock(review.mutex);review.context(args.WidgetContext());} // the real provider opens the app
     void Activate(wp::WidgetContext context){std::lock_guard lock(review.mutex);review.context(context);}
     void Deactivate(winrt::hstring const&){}
 };

@@ -1,50 +1,50 @@
 # Earbud Controls for Windows
 
-Native Win + W controls for Sony WF-C710N: batteries, noise cancelling, ambient
-sound, presets, custom EQ and Clear Bass. Independent project; not affiliated
-with Sony or Microsoft. Project source is MIT licensed.
+A Windows 11 app and Win + W widget for Sony WF-C710N: batteries, noise cancelling, ambient
+sound, your EQ library, Find your EQ and Clear Bass. Independent project; not affiliated with Sony
+or Microsoft. Project source is MIT licensed.
 
-## Install the prerelease
+## Install
 
-Download **EarbudControls-0.4.3-windows-x64.zip** from
-[Releases](https://github.com/KanuTomer/Sound-Connect/releases), extract the entire
-ZIP and run **Install.cmd**. No compiler or source checkout is needed.
+Download **EarbudControls-Setup-0.5.9.exe** from
+[Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the app and
+the widget together. No compiler, ZIP or source checkout is needed.
 
-Requirements: Windows 11 x64 (build 22621+), Windows Web Experience Pack and
-Developer Mode enabled in Windows Settings > System > Advanced > For developers
-(or Privacy & security > For developers on older Windows). Other models and ARM64
-are unverified. Pair and connect WF-C710N manually in Windows Bluetooth settings.
+Requirements: Windows 11 x64 (build 22621+), Windows Web Experience Pack, and Developer Mode on in
+Windows Settings > System > For developers. Windows only shows widgets from apps outside the
+Microsoft Store when Developer Mode is on; setup checks this and explains how to turn it on. Other
+models and ARM64 are unverified. Pair and connect WF-C710N in Windows Bluetooth settings first.
 
-The free prerelease is signed with a local certificate. Setup requests administrator
-permission only to trust its public certificate; installation runs as the original
-user. It includes the Microsoft-signed x64 runtime dependency for machines missing
-Microsoft.WindowsAppRuntime.2 version 2.5.1.0 or newer. It does not disable SmartScreen,
-change global PowerShell policy, pair devices or change earbud settings on startup.
-Windows download/reputation prompts may still appear. The certificate expires
-17 October 2027; renewal will require a future trust update.
+The free release is signed with a local certificate. The first install asks for administrator
+permission once, only to trust that certificate; everything else runs as you. Setup includes the
+Microsoft-signed Windows App Runtime 2.5.1 and installs it only if it is missing. It does not
+disable SmartScreen, change PowerShell policy, pair devices or change earbud settings. Windows
+download and reputation prompts may still appear. The certificate expires 17 October 2027.
 
-Add **WF-C710N** manually using Win + W > Add widgets. Open **Earbud Controls**
-from Start for companion controls. If the picker is stale after enabling Developer
-Mode, close and reopen the board; a Windows sign-out or restart may be needed.
+Open **Earbud Controls** from Start. Add the widget from Win + W > Add widgets > **WF-C710N**.
 
-- Small: filled battery indicators and three direct icon-only mode buttons; no EQ customization.
-- Medium: modes, ambient level, selected-band EQ and Clear Bass editing.
-- Large: curve summary and editing for all five EQ bands plus Clear Bass.
-- Presets have their own view; Preferences uses the widget header's Customize action.
-- The Windows host controls hover, focus and typography. Graphs are readouts;
-  edits use stepped controls rather than graph dragging.
-
-Missing battery readings remain unknown. Cached values are labelled. Startup and
-reconnect read the device and never apply demo or cached EQ values. Logging is
-opt-in. There is no installed service or startup entry.
+- The app: batteries, sound modes, your EQ library with six EQs on the main screen, the EQ editor
+  (five bands from 400 Hz to 16 kHz, plus Clear Bass), Find your EQ, and two EQs kept on the
+  earbuds' Custom 1 and Custom 2 for your phone or other devices.
+- The widget: batteries, the three sound modes and, on Medium and Large, your six main-screen EQs.
+- Choosing a Sony preset selects it on the earbuds. Your own EQs are written to the earbuds'
+  Manual slot. On the first connection the app imports what is already in Custom 1 and Custom 2.
 
 ## Updates and uninstall
 
-Download and run a newer release's Install.cmd. The package identity stays the same,
-so preferences are retained. There is no automatic updater. Uninstall through
-Settings > Apps > Installed apps > Earbud Controls. This does not remove Bluetooth
-pairing or shared Microsoft runtimes. Certificate-trust removal is described in
-the ZIP's README.txt; remove only this project's exact public certificate.
+The app checks this project's GitHub Releases once a day (Settings > App and widget lets you turn
+this off; nothing about you is sent). When a newer version is out, choose **Update** in the title
+bar. The update is installed only after its checksum and signature are verified, and your EQs and
+settings stay. Running a newer setup yourself does the same.
+
+EQs and settings are kept in `%LOCALAPPDATA%\Earbud Controls`. Uninstall from Settings > Apps >
+Installed apps > **Earbud Controls** (the entry setup adds): it asks whether to remove your EQs
+and settings too, and keeps them unless you say so. Removing the Windows package entry instead
+always keeps them. Neither removes Bluetooth pairing, shared Microsoft runtimes or anything stored
+on the earbuds. To remove certificate trust, an administrator can remove only thumbprint
+458DC5875423917D74F77A536EBBB42720D1B67A from Local Computer > Trusted People.
+
+A ZIP with Install.cmd remains available as a fallback for each release.
 
 ## Build and test
 
@@ -52,7 +52,7 @@ Windows x64, Git, Visual Studio 2022 C++ Build Tools, Windows SDK 10.0.26100 and
 CMake 3.31+ are required. In Windows PowerShell from the repository:
 
 ```powershell
-./scripts/build.ps1 -Check
+./scripts/build.ps1 -Check   # owner, widget, app (EarbudControls.UI.exe) and tests
 ./tests/install_tests.ps1
 ```
 
@@ -90,10 +90,11 @@ physical WF-C710N firmware 1.0.5. Passing CI does not establish UI acceptance,
 Bluetooth reliability, gaming performance or a fresh-machine installation pass.
 This release remains a prerelease until the friend-machine flow is verified.
 
-Runtime state may include the selected Bluetooth address, firmware, cached readings
-and preferences. It stays in the app's local data folder and is excluded from the
-repository and release. Do not attach raw state or diagnostic logs to public issues.
-No telemetry or cloud account is required by this app.
+Runtime state may include the selected Bluetooth address, firmware, cached readings,
+preferences and your EQ library. It stays in `%LOCALAPPDATA%\Earbud Controls` and is excluded from
+the repository and release. Do not attach raw state or diagnostic logs to public issues.
+No telemetry or cloud account is required. The only network request is the optional daily
+update check to GitHub Releases.
 
 ## Third-party software
 

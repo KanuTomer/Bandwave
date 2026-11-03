@@ -41,6 +41,30 @@ $taskSums=foreach($taskFile in Get-ChildItem -LiteralPath $taskStage -Recurse -F
 $taskSums | Set-Content -LiteralPath (Join-Path $taskStage 'SHA256SUMS.txt') -Encoding ascii
 Assert-BundleIntegrity $taskStage
 & (Join-Path $taskStage 'scripts/install.ps1') -PackagePath (Join-Path $taskStage $taskPackageName) -CheckOnly
+# The single-file installer: the verified package, runtime and certificate embedded in one exe.
+$taskPayload=Join-Path $taskRoot ('out/setup-payload-'+[guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $taskPayload | Out-Null
+Copy-Item -LiteralPath (Join-Path $taskStage $taskPackageName) -Destination (Join-Path $taskPayload 'EarbudControls.msix')
+Copy-Item -LiteralPath (Join-Path $taskStage 'EarbudControls.Local.cer'),$taskRuntime -Destination $taskPayload
+$taskVswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$taskVs=& $taskVswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$taskCmake=Join-Path $taskVs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe'
+$taskSetupBuild=Join-Path $taskRoot 'build/setup'
+& $taskCmake -S (Join-Path $taskRoot 'setup') -B $taskSetupBuild -G 'Visual Studio 17 2022' -A x64 "-DEARBUD_PAYLOAD=$taskPayload" "-DEARBUD_VERSION=$taskDisplay"
+if($LASTEXITCODE -ne 0){throw 'Setup configuration failed.'}
+& $taskCmake --build $taskSetupBuild --config Release
+if($LASTEXITCODE -ne 0){throw 'Setup build failed.'}
+$taskSetup=Join-Path $taskRoot "out/EarbudControls-Setup-$taskDisplay.exe"
+Copy-Item -LiteralPath (Join-Path $taskSetupBuild 'bin/Release/EarbudControls-Setup.exe') -Destination $taskSetup -Force
+$taskCert=Get-ChildItem Cert:\CurrentUser\My | Where-Object {$_.Thumbprint -eq '458DC5875423917D74F77A536EBBB42720D1B67A' -and $_.HasPrivateKey} | Select-Object -First 1
+if(-not $taskCert){throw 'The release signing certificate is not in this user''s certificate store.'}
+& (Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe') sign /fd SHA256 /sha1 $taskCert.Thumbprint /s My $taskSetup
+if($LASTEXITCODE -ne 0){throw 'Setup signing failed.'}
+$taskCheck=Join-Path $taskPayload 'check.txt'
+$taskChecked=Start-Process -FilePath $taskSetup -ArgumentList '/check',"`"$taskCheck`"" -PassThru -Wait
+if($taskChecked.ExitCode -ne 0){throw 'The built setup failed its own payload check.'}
+((Get-FileHash -LiteralPath $taskSetup -Algorithm SHA256).Hash+'  '+[IO.Path]::GetFileName($taskSetup)) | Set-Content -LiteralPath ($taskSetup+'.sha256') -Encoding ascii
+Write-Output "Setup: $taskSetup"
 $taskOutput=Join-Path $taskRoot "out/EarbudControls-$taskDisplay-windows-x64.zip"
 if(Test-Path -LiteralPath $taskOutput){Remove-Item -LiteralPath $taskOutput}
 [IO.Compression.ZipFile]::CreateFromDirectory($taskStage,$taskOutput,[IO.Compression.CompressionLevel]::Optimal,$false)

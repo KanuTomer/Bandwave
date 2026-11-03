@@ -1,4 +1,7 @@
-EARBUD CONTROLS - WINDOWS X64 PRERELEASE
+EARBUD CONTROLS - WINDOWS X64 PRERELEASE (ZIP FALLBACK)
+
+The simplest install is EarbudControls-Setup-<version>.exe from the same release.
+This ZIP installs the same signed package with Install.cmd.
 
 1. Extract the entire ZIP to a folder. Do not run setup inside the ZIP.
 2. Requirements: Windows 11 build 22621+, x64, Windows Web Experience Pack,
@@ -8,7 +11,7 @@ EARBUD CONTROLS - WINDOWS X64 PRERELEASE
 3. Run Install.cmd. First installation requests administrator permission ONLY
    to trust the included public certificate. Cancelling leaves the app uninstalled.
 4. Pair/connect Sony WF-C710N manually in Windows Bluetooth settings.
-5. Open Win + W, choose Add widgets and add WF-C710N. Open Earbud Controls
+5. Open Win + W, choose Add widgets and add WF-C710N. Open Sound Connect
    from Start for companion controls. Pairing and widget placement are manual.
 
 If the picker is stale after enabling Developer Mode, close and reopen Win + W.
@@ -21,19 +24,22 @@ the required x64 version is absent. No compiler, SDK or source checkout is neede
 The main installer runs as you; only the certificate helper elevates. Do not launch
 the entire installer under a different administrator account.
 
-UPDATES: download and extract a newer release, then run Install.cmd again.
-The same package identity preserves preferences. There is no automatic updater.
+UPDATES: the app checks for updates once a day (it can be turned off in its
+settings). Running a newer setup exe or Install.cmd also updates in place.
+EQs and settings live in %LOCALAPPDATA%\Earbud Controls and are kept.
 The local signing certificate expires 17 October 2027; a replacement certificate
 will require a future trust update. No private signing key is included.
 
-UNINSTALL: Windows Settings > Apps > Installed apps > Earbud Controls > Uninstall.
+UNINSTALL: Windows Settings > Apps > Installed apps > Sound Connect > Uninstall.
+The setup exe's entry asks whether to remove your EQs and settings; the package
+entry from a ZIP install always keeps them in %LOCALAPPDATA%\Earbud Controls.
 This removes this app, not Bluetooth pairing, shared runtimes, or earbud settings.
 To remove certificate trust too, an administrator can remove ONLY thumbprint
 458DC5875423917D74F77A536EBBB42720D1B67A from Local Computer > Trusted People.
 Do not remove other certificates or Microsoft framework packages.
 
-REVIEW: check Small, Medium and Large, wrapping, borders, hover, EQ alignment,
-and fresh battery readings. Small intentionally has no EQ customization. Startup
+REVIEW: check Small, Medium and Large, wrapping, borders, hover and fresh battery
+readings. Small has the sound modes only; Medium and Large add your six EQs. Startup
 reads the earbuds and never applies demo/cached EQ values. Only WF-C710N firmware
 1.0.5 has historical physical-device verification; other models are unverified.
 Testing on a fresh friend's Windows machine is still pending for this prerelease.

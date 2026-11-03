@@ -143,7 +143,7 @@ struct Session {
         HANDLE owner=CreateMutexW(nullptr,FALSE,owner_name.c_str());
         if(!owner)throw std::runtime_error("Could not create the Bluetooth connection lock.");
         auto acquired=WaitForSingleObject(owner,0);
-        if(acquired!=WAIT_OBJECT_0 && acquired!=WAIT_ABANDONED){CloseHandle(owner);throw std::runtime_error("Another Earbud Controls instance or hardware probe owns the connection. Close its controls and wait 15 seconds before retrying.");}
+        if(acquired!=WAIT_OBJECT_0 && acquired!=WAIT_ABANDONED){CloseHandle(owner);throw std::runtime_error("Another Sound Connect instance or hardware probe owns the connection. Close its controls and wait 15 seconds before retrying.");}
         transport_owner=owner;
         if(event_driven&&!use_ble){event_classic=std::make_unique<EventClassicTransport>();connection=&event_classic->api;}
         else if (use_ble) { ble = mdrConnectionWindowsBLECreate(); if (ble) connection = mdrConnectionWindowsBLEGet(ble); }
