@@ -10,10 +10,10 @@ $taskCmake = Join-Path $taskVs 'Common7\IDE\CommonExtensions\Microsoft\CMake\CMa
 if (-not (Test-Path -LiteralPath $taskCmake)) { throw 'Install the Visual Studio C++ CMake component.' }
 & $taskCmake -S $taskRoot -B (Join-Path $taskRoot 'build') -G 'Visual Studio 17 2022' -A x64
 if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
-& $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-probe EarbudControls --parallel 2
+& $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-probe EarbudControls EarbudControls.UI --parallel 2
 if ($LASTEXITCODE -ne 0) { throw 'Probe build failed.' }
 if($Check){
-    & $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-core-tests earbud-protocol-tests --parallel 2
+    & $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-core-tests earbud-protocol-tests earbud-ui-model-tests earbud-library-tests earbud-ipc-tests --parallel 2
     if($LASTEXITCODE -ne 0){throw 'Core test build failed.'}
     $taskCtest=Join-Path (Split-Path $taskCmake -Parent) 'ctest.exe'
     & $taskCtest --test-dir (Join-Path $taskRoot 'build') -C $Configuration --output-on-failure

@@ -11,6 +11,12 @@ $taskStage=Join-Path $taskRoot 'out\package'
 $taskAssets=Join-Path $taskStage 'Assets'
 New-Item -Path $taskAssets,(Join-Path $taskStage 'Public') -ItemType Directory -Force | Out-Null
 Copy-Item -LiteralPath $taskExe -Destination $taskStage -Force
+# The Dusk app: its executable, loose XAML and earbud artwork. The package's framework dependency
+# provides the Windows App Runtime, so its unpackaged bootstrapper DLL is not shipped.
+$taskUiExe=Join-Path $taskRoot 'build\bin\Release\EarbudControls.UI.exe'
+if(-not(Test-Path -LiteralPath $taskUiExe)){throw 'Run scripts/build.ps1 first: EarbudControls.UI.exe is missing.'}
+Copy-Item -LiteralPath $taskUiExe,(Join-Path $taskRoot 'ui\Dusk.xaml') -Destination $taskStage -Force
+Copy-Item -Path (Join-Path $taskRoot 'ui\Assets\*.png') -Destination $taskAssets -Force
 Copy-Item -LiteralPath (Join-Path $taskRoot 'assets/icons/LUCIDE-LICENSE.txt') -Destination $taskStage -Force
 $taskProbeBin=Join-Path $taskRoot 'build\bin\Release'
 Copy-Item -LiteralPath (Join-Path $taskProbeBin 'SonyHeadphonesClient-LICENSE.txt'),(Join-Path $taskProbeBin 'fmt-LICENSE.txt') -Destination $taskStage -Force
@@ -22,19 +28,9 @@ $taskManifest.Save((Join-Path $taskStage 'AppxManifest.xml'))
 # Generate original application icons and a clearly illustrative picker preview.
 Add-Type -AssemblyName System.Drawing
 & (Join-Path $PSScriptRoot 'export-icons.ps1') -Destination (Join-Path $taskStage 'Public\Icons')
-$taskEarbudSource=[System.Drawing.Bitmap]::FromFile((Join-Path $taskStage 'Public\Icons\bluetooth-accent.png'))
-foreach($taskSize in 44,50,150){
-    $taskBitmap=[System.Drawing.Bitmap]::new($taskSize,$taskSize)
-    $taskGraphics=[System.Drawing.Graphics]::FromImage($taskBitmap)
-    $taskGraphics.SmoothingMode=[System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $taskGraphics.Clear([System.Drawing.Color]::Transparent)
-    $taskGraphics.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $taskGraphics.DrawImage($taskEarbudSource,0,0,$taskSize,$taskSize)
-    $taskName=if($taskSize -eq 50){'StoreLogo.png'}else{"Logo$taskSize.png"}
-    $taskBitmap.Save((Join-Path $taskAssets $taskName),[System.Drawing.Imaging.ImageFormat]::Png)
-    $taskGraphics.Dispose();$taskBitmap.Dispose()
-}
-$taskEarbudSource.Dispose()
+# The app icon: one earbud outline on black.
+Remove-Item -Path (Join-Path $taskAssets 'Logo*.png') -Force -ErrorAction SilentlyContinue
+& (Join-Path $PSScriptRoot 'export-app-icon.ps1') -Package $taskAssets
 $taskBitmap=[System.Drawing.Bitmap]::new(600,400)
 $taskGraphics=[System.Drawing.Graphics]::FromImage($taskBitmap)
 $taskGraphics.Clear([System.Drawing.ColorTranslator]::FromHtml('#24262F'))
@@ -58,6 +54,12 @@ $taskBitmap.Save((Join-Path $taskAssets 'Preview.png'),[System.Drawing.Imaging.I
 $taskSmallFont.Dispose();$taskBrush.Dispose();$taskFont.Dispose();$taskGraphics.Dispose();$taskBitmap.Dispose()
 Copy-Item -LiteralPath (Join-Path $taskAssets 'StoreLogo.png') -Destination (Join-Path $taskStage 'Public\Icon.png') -Force
 
+# resources.pri indexes the logo variants; without it Windows puts the taskbar icon on a plate.
+$taskPri=Join-Path $taskRoot 'out\priconfig.xml'
+& (Join-Path $taskSdk 'makepri.exe') createconfig /cf $taskPri /dq en-US /pv 10.0.0 /o | Out-Null
+if($LASTEXITCODE -ne 0){throw 'makepri createconfig failed.'}
+& (Join-Path $taskSdk 'makepri.exe') new /pr $taskStage /cf $taskPri /mn (Join-Path $taskStage 'AppxManifest.xml') /of (Join-Path $taskStage 'resources.pri') /o | Out-Null
+if($LASTEXITCODE -ne 0){throw 'makepri new failed.'}
 $taskCert=Get-ChildItem Cert:\CurrentUser\My | Where-Object {$_.Subject -eq 'CN=EarbudControls.Local' -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(7)} | Sort-Object NotAfter -Descending | Select-Object -First 1
 if(-not $taskCert){$taskCert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=EarbudControls.Local' -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddYears(1)}
 $taskOut=Join-Path $taskRoot 'out'

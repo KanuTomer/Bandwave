@@ -9,6 +9,9 @@ $taskFiles+=Join-Path $taskRoot 'scripts/Convert-SvgPath.ps1'
 $taskFiles+=Join-Path $taskRoot 'CMakeLists.txt'
 $taskFiles+=Join-Path $taskRoot 'packaging/AppxManifest.xml'
 $taskFiles+=(Get-ChildItem -LiteralPath (Join-Path $taskRoot 'assets/icons') -Filter '*.svg').FullName
+# The app is reviewed with the widget: its code, layout and artwork are part of the same approval.
+$taskFiles+=(Get-ChildItem -LiteralPath (Join-Path $taskRoot 'ui') -File | Where-Object {$_.Extension -in '.cpp','.hpp','.xaml'}).FullName
+$taskFiles+=(Get-ChildItem -LiteralPath (Join-Path $taskRoot 'ui/Assets') -Filter '*.png').FullName
 $taskRows=foreach($taskFile in ($taskFiles | Sort-Object -Unique)) { ($taskFile.Substring($taskRoot.Length+1).Replace('\','/'))+':'+(Get-FileHash -LiteralPath $taskFile -Algorithm SHA256).Hash }
 $taskHasher=[Security.Cryptography.SHA256]::Create()
 try { [BitConverter]::ToString($taskHasher.ComputeHash([Text.Encoding]::UTF8.GetBytes(($taskRows -join "`n")))).Replace('-','') } finally { $taskHasher.Dispose() }

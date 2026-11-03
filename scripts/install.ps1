@@ -46,6 +46,6 @@ if((Get-AuthenticodeSignature -LiteralPath $taskPackage).Status -ne 'Valid'){thr
 if($taskNeedsRuntime){Add-AppxPackage -Path $taskPackage -DependencyPath $taskDependency -ForceApplicationShutdown}else{Add-AppxPackage -Path $taskPackage -ForceApplicationShutdown}
 $taskInstalled=Get-AppxPackage -Name Kanu.EarbudControls
 if(-not $taskInstalled -or [version]$taskInstalled.Version -ne [version]$taskIdentity.Version){throw 'Installed version could not be confirmed.'}
-Write-Output "Installed Earbud Controls $($taskInstalled.Version). Open Win + W, select Add widgets, and add WF-C710N."
-Write-Output 'Open Earbud Controls from Start for the companion controls. Pairing and widget placement are manual.'
+Write-Output "Installed Sound Connect $($taskInstalled.Version). Open Win + W, select Add widgets, and add WF-C710N."
+Write-Output 'Open Sound Connect from Start for the companion controls. Pairing and widget placement are manual.'
 Write-Output 'If the picker is stale after enabling Developer Mode, close Win + W and reopen it. A Windows sign-out or restart may be needed.'

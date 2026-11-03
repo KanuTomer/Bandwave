@@ -1,0 +1,2 @@
+// The app's own icon: window title, taskbar previews and the tray. Made by scripts/export-app-icon.ps1.
+1 ICON "app.ico"

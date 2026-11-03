@@ -28,7 +28,7 @@ if($taskReview.status -ne 'passed' -or $taskReview.sourceFingerprint -ne $taskFi
 $taskBuiltExe=Join-Path $taskRoot 'build/bin/Release/EarbudControls.exe'
 if(-not(Test-Path -LiteralPath $taskBuiltExe) -or $taskReview.productionExeSha256 -ne (Get-FileHash -LiteralPath $taskBuiltExe -Algorithm SHA256).Hash){throw 'Packaging blocked: the executable differs from the reviewed build.'}
 foreach($taskSize in 'small','medium','large'){
-    $taskViews=if($taskSize -eq 'small'){@('home','more')}else{@('home','eq','presets','more')}
+    $taskViews=@('home') # 0.5: the widget has one view in every size
     foreach($taskView in $taskViews){
         $taskEvidence=@($taskReview.captures | Where-Object {$_.size -eq $taskSize -and $_.view -eq $taskView -and $_.renderer -eq 'windows-widgets' -and $_.result -eq 'passed'})
         if(-not $taskEvidence.Count){throw "Packaging blocked: missing native $taskSize / $taskView review."}
@@ -37,7 +37,7 @@ foreach($taskSize in 'small','medium','large'){
         }
     }
 }
-foreach($taskCheck in 'smooth_graph','correct_graph_aspect','readable_insets','no_clipped_panels','hover_matches_target','no_obscuring_tooltips','navigation_and_focus'){
+foreach($taskCheck in 'readable_insets','no_clipped_panels','hover_matches_target','no_obscuring_tooltips','navigation_and_focus'){
     if($taskReview.checks.$taskCheck -ne $true){throw "Packaging blocked: scrutiny check '$taskCheck' has not passed."}
 }
 Write-Output 'Native Windows UI scrutiny passed for the current source.'

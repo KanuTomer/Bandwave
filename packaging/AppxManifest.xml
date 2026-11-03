@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3" xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap uap3 com rescap">
-  <Identity Name="Kanu.EarbudControls" Publisher="CN=EarbudControls.Local" Version="0.4.3.0" ProcessorArchitecture="x64"/>
-  <Properties><DisplayName>Earbud Controls</DisplayName><PublisherDisplayName>Local development</PublisherDisplayName><Logo>Assets\StoreLogo.png</Logo></Properties>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3" xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6" IgnorableNamespaces="uap uap3 com rescap desktop6">
+  <Identity Name="Kanu.EarbudControls" Publisher="CN=EarbudControls.Local" Version="0.5.9.0" ProcessorArchitecture="x64"/>
+  <Properties><DisplayName>Sound Connect</DisplayName><PublisherDisplayName>Local development</PublisherDisplayName><Logo>Assets\StoreLogo.png</Logo><desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization></Properties>
   <Resources><Resource Language="en-us"/></Resources>
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22621.0" MaxVersionTested="10.0.26300.0"/>
@@ -9,21 +9,21 @@
   </Dependencies>
   <Applications>
     <Application Id="App" Executable="EarbudControls.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="Earbud Controls" Description="Lightweight WF-C710N controls" BackgroundColor="transparent" Square150x150Logo="Assets\Logo150.png" Square44x44Logo="Assets\Logo44.png"/>
+      <uap:VisualElements DisplayName="Sound Connect" Description="Lightweight WF-C710N controls" BackgroundColor="transparent" Square150x150Logo="Assets\Logo150.png" Square44x44Logo="Assets\Logo44.png"/>
       <Extensions>
-        <com:Extension Category="windows.comServer"><com:ComServer><com:ExeServer Executable="EarbudControls.exe" Arguments="--provider" DisplayName="Earbud Controls"><com:Class Id="891E4D36-A7CB-423C-B150-96D9EB1071C7" DisplayName="Earbud Controls Widget"/></com:ExeServer></com:ComServer></com:Extension>
-        <uap3:Extension Category="windows.appExtension"><uap3:AppExtension Name="com.microsoft.windows.widgets" DisplayName="Earbud Controls" Id="EarbudControls.Provider" PublicFolder="Public"><uap3:Properties>
+        <com:Extension Category="windows.comServer"><com:ComServer><com:ExeServer Executable="EarbudControls.exe" Arguments="--provider" DisplayName="Sound Connect"><com:Class Id="891E4D36-A7CB-423C-B150-96D9EB1071C7" DisplayName="Sound Connect Widget"/></com:ExeServer></com:ComServer></com:Extension>
+        <uap3:Extension Category="windows.appExtension"><uap3:AppExtension Name="com.microsoft.windows.widgets" DisplayName="Sound Connect" Id="EarbudControls.Provider" PublicFolder="Public"><uap3:Properties>
           <WidgetProvider>
             <ProviderIcons><Icon Path="Assets\StoreLogo.png"/></ProviderIcons>
             <Activation><CreateInstance ClassId="891E4D36-A7CB-423C-B150-96D9EB1071C7"/></Activation>
-            <Definitions><Definition Id="WF-C710N" DisplayName="WF-C710N" Description="Battery, noise control, and in-widget EQ" AllowMultiple="false" IsCustomizable="false">
+            <Definitions><Definition Id="WF-C710N" DisplayName="WF-C710N" Description="Battery, sound mode and your six EQs" AllowMultiple="false" IsCustomizable="false">
               <Capabilities><Capability><Size Name="small"/></Capability><Capability><Size Name="medium"/></Capability><Capability><Size Name="large"/></Capability></Capabilities>
-              <ThemeResources><Icons><Icon Path="Assets\StoreLogo.png"/></Icons><Screenshots><Screenshot Path="Assets\Preview.png" DisplayAltText="Illustrative preview of WF-C710N battery, noise modes, and in-widget EQ"/></Screenshots><DarkMode/><LightMode/></ThemeResources>
+              <ThemeResources><Icons><Icon Path="Assets\StoreLogo.png"/></Icons><Screenshots><Screenshot Path="Assets\Preview.png" DisplayAltText="Illustrative preview of WF-C710N battery, sound modes and six EQs"/></Screenshots><DarkMode/><LightMode/></ThemeResources>
             </Definition></Definitions>
           </WidgetProvider>
         </uap3:Properties></uap3:AppExtension></uap3:Extension>
       </Extensions>
     </Application>
   </Applications>
-  <Capabilities><rescap:Capability Name="runFullTrust"/><DeviceCapability Name="bluetooth"/></Capabilities>
+  <Capabilities><rescap:Capability Name="runFullTrust"/><rescap:Capability Name="unvirtualizedResources"/><DeviceCapability Name="bluetooth"/></Capabilities>
 </Package>
