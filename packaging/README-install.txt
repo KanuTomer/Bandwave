@@ -1,4 +1,4 @@
-EARBUD CONTROLS - WINDOWS X64 PRERELEASE (ZIP FALLBACK)
+SOUND CONNECT - WINDOWS X64 (ZIP FALLBACK)
 
 The simplest install is EarbudControls-Setup-<version>.exe from the same release.
 This ZIP installs the same signed package with Install.cmd.
@@ -16,7 +16,7 @@ This ZIP installs the same signed package with Install.cmd.
 
 If the picker is stale after enabling Developer Mode, close and reopen Win + W.
 A Windows sign-out or restart may be needed. Setup does not disable SmartScreen
-or change your global PowerShell policy. A free self-signed prerelease can produce
+or change your global PowerShell policy. A self-signed release can produce
 Windows download/reputation prompts; check the source and release before trusting.
 
 The Microsoft-signed runtime dependency is included and is installed only when
@@ -38,11 +38,8 @@ To remove certificate trust too, an administrator can remove ONLY thumbprint
 458DC5875423917D74F77A536EBBB42720D1B67A from Local Computer > Trusted People.
 Do not remove other certificates or Microsoft framework packages.
 
-REVIEW: check Small, Medium and Large, wrapping, borders, hover and fresh battery
-readings. Small has the sound modes only; Medium and Large add your six EQs. Startup
-reads the earbuds and never applies demo/cached EQ values. Only WF-C710N firmware
-1.0.5 has historical physical-device verification; other models are unverified.
-Testing on a fresh friend's Windows machine is still pending for this prerelease.
+WIDGET: Small shows batteries and the sound modes; Medium and Large add your six
+main-screen EQs. Sound Connect supports Sony WF-C710N only.
 
 Source, issues and releases: https://github.com/KanuTomer/Sound-Connect
 Independent project; not affiliated with Sony or Microsoft. See LICENSE and
