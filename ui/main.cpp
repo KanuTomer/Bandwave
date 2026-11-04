@@ -320,9 +320,11 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             }
             // Only listen while the window can be seen, and never when animations are turned off.
             window.VisibilityChanged([this](auto&&, WindowVisibilityChangedEventArgs const& args) { listen(args.Visible()); send_interest(args.Visible()); });
+            // Hidden in the tray is not minimized: without the IsVisible check, hiding turned the
+            // waves and audio capture straight back on (about 9-16% GPU with nothing on screen).
             window.AppWindow().Changed([this](auto const& sender, auto const&) {
                 if (auto presenter = sender.Presenter().template try_as<Microsoft::UI::Windowing::OverlappedPresenter>())
-                    listen(presenter.State() != Microsoft::UI::Windowing::OverlappedPresenterState::Minimized);
+                    listen(sender.IsVisible() && presenter.State() != Microsoft::UI::Windowing::OverlappedPresenterState::Minimized);
             });
             // The exe's icon on the window, so the title bar, taskbar preview and Alt+Tab show it.
             if (auto icon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE))) {
