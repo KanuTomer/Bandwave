@@ -7,6 +7,8 @@
 #include "native_editor.hpp"
 #include "library.hpp"
 #include "ipc.hpp"
+#include <winrt/Windows.ApplicationModel.h>
+#include <winrt/Windows.ApplicationModel.Activation.h>
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Microsoft.Windows.Widgets.Providers.h>
@@ -213,6 +215,7 @@ public:
         }
         if(verb==L"noise.anc"||verb==L"noise.ambient"||verb==L"noise.off")controller->send({Operation::Noise,verb==L"noise.anc"?1:verb==L"noise.ambient"?2:0});
     }
+    bool start_in_tray=false; // launched by the startup task at sign-in: the app starts in the tray
     void open(int page){
         editor_started=true;
         // The Dusk app is its own process. If it is already connected, bring it forward.
@@ -221,7 +224,7 @@ public:
         if(count&&count<32768){
             auto ui=std::filesystem::path(module).parent_path()/L"EarbudControls.UI.exe";
             std::error_code ec;
-            if(std::filesystem::exists(ui,ec)){auto args=L"--page="+std::to_wstring(page);ShellExecuteW(nullptr,L"open",ui.c_str(),args.c_str(),nullptr,SW_SHOWNORMAL);return;}
+            if(std::filesystem::exists(ui,ec)){auto args=start_in_tray?std::wstring(L"--tray"):L"--page="+std::to_wstring(page);start_in_tray=false;ShellExecuteW(nullptr,L"open",ui.c_str(),args.c_str(),nullptr,SW_SHOWNORMAL);return;}
         }
         if(native&&native->window){native->show(page);return;}
         native=std::make_unique<NativeEditor>([this]{return controller->snapshot();},[this](Command command){controller->send(std::move(command));},
@@ -444,9 +447,12 @@ struct ProviderFactory:winrt::implements<ProviderFactory,IClassFactory>{
 
 int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR arguments,int){
     bool provider=wcsstr(arguments,L"--provider")||wcsstr(arguments,L"-Embedding");
+    bool startup=false;
     try{
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         winrt::init_apartment(winrt::apartment_type::single_threaded);
+        // "Start with Windows" (0.6): the startup task launches this process with no arguments, so ask how it was activated.
+        if(!provider)try{if(auto activated=winrt::Windows::ApplicationModel::AppInstance::GetActivatedEventArgs())startup=activated.Kind()==winrt::Windows::ApplicationModel::Activation::ActivationKind::StartupTask;}catch(...){}
         INITCOMMONCONTROLSEX common{sizeof(common),ICC_STANDARD_CLASSES|ICC_BAR_CLASSES};InitCommonControlsEx(&common);
         HANDLE token{};winrt::check_bool(OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token));DWORD bytes{};GetTokenInformation(token,TokenUser,nullptr,0,&bytes);std::vector<BYTE> buffer(bytes);winrt::check_bool(GetTokenInformation(token,TokenUser,buffer.data(),bytes,&bytes));CloseHandle(token);
         LPWSTR raw_sid{};winrt::check_bool(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buffer.data())->User.Sid,&raw_sid));std::wstring sid(raw_sid);LocalFree(raw_sid);
@@ -459,7 +465,7 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR arguments,int){
             LocalFree(descriptor);CloseHandle(mutex);return 0;
         }
         {
-            App app;app.pipe_name=pipe;app.init(!provider);app.start_pipe(descriptor);
+            App app;app.pipe_name=pipe;app.start_in_tray=startup;app.init(!provider);app.start_pipe(descriptor);
             auto factory=winrt::make<ProviderFactory>(app);DWORD cookie{};
             winrt::check_hresult(CoRegisterClassObject(ProviderClsid,factory.get(),CLSCTX_LOCAL_SERVER,REGCLS_MULTIPLEUSE,&cookie));
             MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){if(app.editor&&IsDialogMessageW(app.editor,&msg))continue;TranslateMessage(&msg);DispatchMessageW(&msg);}

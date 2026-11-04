@@ -6,7 +6,8 @@
      <SolidColorBrush x:Key="Veil" Color="#12FFFFFF"/>
      <SolidColorBrush x:Key="RuleBrush" Color="#1FFFFFFF"/>
      <SolidColorBrush x:Key="SoftText" Color="#D1F2F2F2"/>
-     <SolidColorBrush x:Key="DrawerFill" Color="#FF121212"/>
+     <!-- Glass: translucent, over the stage's own frosted waves (0.5.18). -->
+     <SolidColorBrush x:Key="DrawerFill" Color="#B8121212"/>
      <SolidColorBrush x:Key="ToggleButtonBackground" Color="#0DFFFFFF"/>
      <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="#1AFFFFFF"/>
      <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="#26FFFFFF"/>
@@ -82,8 +83,12 @@
 
   <Grid x:Name="MainPage" Grid.Row="1">
    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <!-- The stage's swap chain covers the whole page, behind the controls, and draws the waves only in
+        the Stage row. Covering just the stage left an edge under it that Windows can composite
+        differently from the page (hardware overlay planes), seen on the panel as a hard bar under the
+        library's glass but never in screenshots (0.5.19). -->
+   <SwapChainPanel x:Name="WaveChain" Grid.RowSpan="4" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
    <Grid x:Name="Stage" AutomationProperties.AccessibilityView="Raw">
-    <SwapChainPanel x:Name="WaveChain" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
     <Viewbox MaxWidth="548" MaxHeight="197" Margin="16,8" Stretch="Uniform" Opacity="0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw">
      <Grid Width="780" Height="280" ColumnSpacing="60">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -108,19 +113,16 @@
    <Grid Grid.Row="1" HorizontalAlignment="Center" Width="344" Margin="0,0,0,12">
     <Grid.ColumnDefinitions><ColumnDefinition Width="136"/><ColumnDefinition Width="72"/><ColumnDefinition Width="136"/></Grid.ColumnDefinitions>
     <StackPanel x:Name="BatteryLeft" Spacing="3" Width="72" AutomationProperties.Name="Left earbud battery">
-     <TextBlock Text="Left" FontSize="12" HorizontalAlignment="Center" Foreground="{ThemeResource SoftText}"/>
      <TextBlock x:Name="BatteryLeftText" Text="—" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="32" HorizontalAlignment="Center"/>
      <Grid Height="3"><Border Background="#33FFFFFF" CornerRadius="1.5"/><Border x:Name="BatteryLeftBar" Width="0" HorizontalAlignment="Left" Background="#F2F2F2" CornerRadius="1.5"/></Grid>
      <Viewbox Width="30" Height="30" Margin="0,6,0,0" Opacity=".7" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw"><Canvas Width="24" Height="24"><Path Data="M18.09,10.63 L18.92,10.82 L19.72,11.15 L20.45,11.60 L21.11,12.15 L21.67,12.80 L22.13,13.53 L22.46,14.33 L22.67,15.16 L22.75,16.02 L22.69,16.88 L22.50,17.72 L22.18,18.52 L21.74,19.26 L21.20,19.92 L20.55,20.49 L19.83,20.95 L19.04,21.29 L18.21,21.51 L17.35,21.60 L16.49,21.55 L15.65,21.37 L14.85,21.06 L14.10,20.63" Stroke="#F2F2F2" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/><Path Data="M18.14,11.70 C18.13,12.41 18.05,13.14 17.89,13.85 C17.73,14.55 17.46,15.22 17.17,15.91 C16.88,16.60 16.56,17.28 16.15,17.98 C15.74,18.67 15.31,19.48 14.71,20.08 C14.10,20.68 13.32,21.32 12.51,21.57 C11.71,21.82 10.69,21.80 9.87,21.60 C9.04,21.39 8.23,20.81 7.55,20.35 C6.86,19.89 6.32,19.31 5.75,18.83 C5.18,18.34 4.64,17.92 4.14,17.42 C3.63,16.93 3.11,16.42 2.71,15.83 C2.30,15.24 1.97,14.57 1.73,13.88 C1.48,13.19 1.32,12.44 1.25,11.70 C1.18,10.95 1.17,10.15 1.30,9.40 C1.43,8.65 1.68,7.86 2.03,7.17 C2.38,6.47 2.87,5.81 3.41,5.23 C3.94,4.66 4.58,4.12 5.25,3.70 C5.92,3.27 6.68,2.90 7.45,2.69 C8.22,2.47 9.07,2.37 9.87,2.40 C10.66,2.43 11.48,2.60 12.24,2.85 C12.99,3.09 13.73,3.45 14.38,3.87 C15.03,4.30 15.65,4.84 16.14,5.42 C16.63,6.01 17.01,6.71 17.31,7.40 C17.61,8.08 17.79,8.82 17.93,9.54 C18.06,10.25 18.14,10.98 18.14,11.70 Z" Stroke="#F2F2F2" StrokeThickness="1.2" StrokeLineJoin="Round"/><Path Data="M3.99,11.16 A5.53,5.53 0 1 1 15.05,11.16 A5.53,5.53 0 1 1 3.99,11.16 Z" Stroke="#F2F2F2" StrokeThickness="1.2"/></Canvas></Viewbox>
     </StackPanel>
     <StackPanel x:Name="BatteryCase" Grid.Column="1" Spacing="3" Width="72" AutomationProperties.Name="Case battery">
-     <TextBlock Text="Case" FontSize="12" HorizontalAlignment="Center" Foreground="{ThemeResource SoftText}"/>
      <TextBlock x:Name="BatteryCaseText" Text="—" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="32" HorizontalAlignment="Center"/>
      <Grid Height="3"><Border Background="#33FFFFFF" CornerRadius="1.5"/><Border x:Name="BatteryCaseBar" Width="0" HorizontalAlignment="Left" Background="#F2F2F2" CornerRadius="1.5"/></Grid>
      <Viewbox Width="40" Height="25" Margin="0,8,0,0" Opacity=".7" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw"><Canvas Width="32" Height="20"><Path Data="M20.48,2.52 C22.62,2.55 23.36,2.58 24.39,2.71 C25.43,2.83 26.03,3.02 26.69,3.26 C27.36,3.50 27.87,3.81 28.36,4.15 C28.86,4.50 29.29,4.90 29.64,5.34 C29.99,5.77 30.27,6.25 30.49,6.75 C30.71,7.25 30.86,7.79 30.93,8.34 C31.01,8.88 30.97,9.45 30.93,10.00 C30.88,10.55 30.77,11.12 30.65,11.66 C30.53,12.21 30.38,12.75 30.20,13.25 C30.02,13.75 29.81,14.23 29.58,14.66 C29.35,15.10 29.13,15.50 28.83,15.85 C28.53,16.19 28.24,16.50 27.76,16.74 C27.29,16.98 26.90,17.17 25.97,17.29 C25.04,17.42 24.87,17.45 22.18,17.48 C19.49,17.51 12.51,17.51 9.82,17.48 C7.13,17.45 6.96,17.42 6.03,17.29 C5.10,17.17 4.71,16.98 4.24,16.74 C3.76,16.50 3.47,16.19 3.17,15.85 C2.87,15.50 2.65,15.10 2.42,14.66 C2.19,14.23 1.98,13.75 1.80,13.25 C1.62,12.75 1.47,12.21 1.35,11.66 C1.23,11.12 1.12,10.55 1.07,10.00 C1.03,9.45 0.99,8.88 1.07,8.34 C1.14,7.79 1.29,7.25 1.51,6.75 C1.73,6.25 2.01,5.77 2.36,5.34 C2.71,4.90 3.14,4.50 3.64,4.15 C4.13,3.81 4.64,3.50 5.31,3.26 C5.97,3.02 6.57,2.83 7.61,2.71 C8.64,2.58 9.38,2.55 11.52,2.52 C13.67,2.49 18.33,2.49 20.48,2.52 Z" Stroke="#F2F2F2" StrokeThickness="1.2" StrokeLineJoin="Round"/><Path Data="M1.94,10.51 L9.70,10.51 M22.30,10.51 L30.06,10.51" Stroke="#F2F2F2" StrokeThickness="1" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/><Path Data="M11.80,9.52 L20.20,9.52 A1.20,1.20 0 0 1 20.20,11.92 L11.80,11.92 A1.20,1.20 0 0 1 11.80,9.52 Z" Stroke="#F2F2F2" StrokeThickness="1"/></Canvas></Viewbox>
     </StackPanel>
     <StackPanel x:Name="BatteryRight" Grid.Column="2" Spacing="3" Width="72" AutomationProperties.Name="Right earbud battery">
-     <TextBlock Text="Right" FontSize="12" HorizontalAlignment="Center" Foreground="{ThemeResource SoftText}"/>
      <TextBlock x:Name="BatteryRightText" Text="—" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="32" HorizontalAlignment="Center"/>
      <Grid Height="3"><Border Background="#33FFFFFF" CornerRadius="1.5"/><Border x:Name="BatteryRightBar" Width="0" HorizontalAlignment="Left" Background="#F2F2F2" CornerRadius="1.5"/></Grid>
      <Viewbox Width="30" Height="30" Margin="0,6,0,0" Opacity=".7" HorizontalAlignment="Center" AutomationProperties.AccessibilityView="Raw" RenderTransformOrigin="0.5,0.5"><Viewbox.RenderTransform><ScaleTransform ScaleX="-1"/></Viewbox.RenderTransform><Canvas Width="24" Height="24"><Path Data="M18.09,10.63 L18.92,10.82 L19.72,11.15 L20.45,11.60 L21.11,12.15 L21.67,12.80 L22.13,13.53 L22.46,14.33 L22.67,15.16 L22.75,16.02 L22.69,16.88 L22.50,17.72 L22.18,18.52 L21.74,19.26 L21.20,19.92 L20.55,20.49 L19.83,20.95 L19.04,21.29 L18.21,21.51 L17.35,21.60 L16.49,21.55 L15.65,21.37 L14.85,21.06 L14.10,20.63" Stroke="#F2F2F2" StrokeThickness="1.2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/><Path Data="M18.14,11.70 C18.13,12.41 18.05,13.14 17.89,13.85 C17.73,14.55 17.46,15.22 17.17,15.91 C16.88,16.60 16.56,17.28 16.15,17.98 C15.74,18.67 15.31,19.48 14.71,20.08 C14.10,20.68 13.32,21.32 12.51,21.57 C11.71,21.82 10.69,21.80 9.87,21.60 C9.04,21.39 8.23,20.81 7.55,20.35 C6.86,19.89 6.32,19.31 5.75,18.83 C5.18,18.34 4.64,17.92 4.14,17.42 C3.63,16.93 3.11,16.42 2.71,15.83 C2.30,15.24 1.97,14.57 1.73,13.88 C1.48,13.19 1.32,12.44 1.25,11.70 C1.18,10.95 1.17,10.15 1.30,9.40 C1.43,8.65 1.68,7.86 2.03,7.17 C2.38,6.47 2.87,5.81 3.41,5.23 C3.94,4.66 4.58,4.12 5.25,3.70 C5.92,3.27 6.68,2.90 7.45,2.69 C8.22,2.47 9.07,2.37 9.87,2.40 C10.66,2.43 11.48,2.60 12.24,2.85 C12.99,3.09 13.73,3.45 14.38,3.87 C15.03,4.30 15.65,4.84 16.14,5.42 C16.63,6.01 17.01,6.71 17.31,7.40 C17.61,8.08 17.79,8.82 17.93,9.54 C18.06,10.25 18.14,10.98 18.14,11.70 Z" Stroke="#F2F2F2" StrokeThickness="1.2" StrokeLineJoin="Round"/><Path Data="M3.99,11.16 A5.53,5.53 0 1 1 15.05,11.16 A5.53,5.53 0 1 1 3.99,11.16 Z" Stroke="#F2F2F2" StrokeThickness="1.2"/></Canvas></Viewbox>
@@ -191,18 +193,29 @@
      </MenuFlyout></Button.Flyout>
     </Button>
    </Grid>
-   <Grid x:Name="CurveArea" Grid.Row="1" Margin="28,16,28,0" MinHeight="140">
+   <Grid x:Name="CurveArea" Grid.Row="1" Margin="104,16,28,0" MinHeight="140">
     <Border Background="#05FFFFFF" BorderBrush="#12FFFFFF" BorderThickness="1" CornerRadius="8"/>
+    <SwapChainPanel x:Name="CurveChain" Margin="8" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
     <Rectangle x:Name="CurveGlow" IsHitTestVisible="False" Visibility="Collapsed" AutomationProperties.AccessibilityView="Raw"/>
     <Grid x:Name="BandGrid" Margin="44,12,20,12"/>
     <Canvas x:Name="CurveCanvas" Margin="12" IsHitTestVisible="False"/>
    </Grid>
-   <Grid x:Name="BandValues" Grid.Row="2" Margin="72,10,48,0"/>
-   <Grid x:Name="BassRow" Grid.Row="3" Margin="28,14,28,24" Padding="16,4" ColumnSpacing="12">
-    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*" MaxWidth="520"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-    <TextBlock x:Name="BassLabel" Text="Clear Bass" VerticalAlignment="Center" FontSize="13"/>
-    <Slider x:Name="BassSlider" Grid.Column="1" Minimum="-10" Maximum="10" StepFrequency="1" VerticalAlignment="Center" AutomationProperties.Name="Clear Bass" IsThumbToolTipEnabled="False"/>
-    <TextBlock x:Name="BassValue" Grid.Column="2" VerticalAlignment="Center" Width="32" FontSize="16"/>
+   <Grid x:Name="BandValues" Grid.Row="2" Margin="148,10,48,0"/>
+   <!-- Clear Bass (0.5.18): Sony's bass processing, not a sixth EQ point, so it is its own glowing
+        column beside the graph, at the bass end. Drag it up or down; the glow grows from 0. -->
+   <Grid x:Name="BassRow" Grid.Row="1" Grid.RowSpan="2" Width="64" HorizontalAlignment="Left" Margin="28,16,0,0">
+    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <Border Background="#05FFFFFF" BorderBrush="#12FFFFFF" BorderThickness="1" CornerRadius="8"/>
+    <Grid x:Name="BassTrack" Margin="0,12">
+     <Rectangle x:Name="BassZero" Height="1" Margin="14,0" VerticalAlignment="Top" Fill="#29FFFFFF" IsHitTestVisible="False"/>
+     <Border x:Name="BassGlow" Width="18" HorizontalAlignment="Center" VerticalAlignment="Top" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
+     <Border x:Name="BassKnob" Width="24" Height="10" CornerRadius="5" HorizontalAlignment="Center" VerticalAlignment="Top" Background="#0A0A0A" BorderBrush="#F2F2F2" BorderThickness="2" IsHitTestVisible="False"/>
+     <Slider x:Name="BassSlider" Style="{StaticResource BandSlider}" HorizontalAlignment="Center" VerticalAlignment="Stretch" AutomationProperties.Name="Clear Bass"/>
+    </Grid>
+    <StackPanel Grid.Row="1" Spacing="2" Margin="0,10,0,0" HorizontalAlignment="Center">
+     <TextBlock x:Name="BassValue" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="26" HorizontalAlignment="Center"/>
+     <TextBlock x:Name="BassLabel" Text="Clear Bass" FontSize="12" HorizontalAlignment="Center"/>
+    </StackPanel>
    </Grid>
    <Grid x:Name="EqBankRow" Grid.Row="4" Margin="28,14,28,22" ColumnSpacing="8" Visibility="Collapsed">
     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -267,6 +280,8 @@
       <Viewbox x:Name="SettingsBudRight" Grid.Column="1" Width="200" Height="184" RenderTransformOrigin="0.5,0.5"><Viewbox.RenderTransform><ScaleTransform ScaleX="-1"/></Viewbox.RenderTransform></Viewbox>
      </Grid>
      <StackPanel x:Name="SettingsRight" Grid.Column="2" Spacing="26" VerticalAlignment="Center"/>
+     <!-- Disconnected: none of the earbuds' settings can be changed, so they are hidden and this says why (0.6.2). -->
+     <TextBlock x:Name="SettingsOffline" Grid.ColumnSpan="3" Text="Connect your earbuds to change their settings." FontSize="15" Foreground="{ThemeResource SoftText}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,260,0,0" Visibility="Collapsed"/>
      <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" Margin="0,18,0,0">
       <Button x:Name="ConnectionsButton" Content="Connections" Height="44" Padding="18,0"/>
       <Button x:Name="AppButton" Content="App and widget" Height="44" Padding="18,0"/>

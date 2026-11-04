@@ -14,6 +14,7 @@
 #include <fstream>
 #include <chrono>
 #include "wave_frame.hpp"
+#include "line_pipeline.hpp"
 
 // GPU timers (diagnostics, off unless "gpu-timing.on" exists in the data folder). Timestamp queries
 // around each part of a stage frame, read back a few frames later so nothing waits. Every 5 seconds
@@ -82,7 +83,15 @@ struct StageChain {
     winrt::com_ptr<ID2D1Device> device;
     winrt::com_ptr<ID2D1DeviceContext> context;
     winrt::com_ptr<ID2D1Bitmap1> target, glow_in, glow_out;
-    winrt::com_ptr<ID2D1Effect> blur,normalise,halo,halo_gain,glow,tint;
+    winrt::com_ptr<ID2D1Effect> blur,normalise,halo,halo_gain,glow,tint,frost_blur;
+    // The glow and the frost fade to black at the stage's top and bottom: frosted, the waves reached the
+    // bottom edge and stopped there in a hard line under the library (0.5.18).
+    winrt::com_ptr<ID2D1LinearGradientBrush> fade_down,fade_up;static constexpr float kBottomFade=96;
+    // Frost (0.5.18): behind the library's glass the stage keeps moving, but out of focus. The lines
+    // are drawn at a quarter of the resolution, blurred, and scaled up; Windows' own Acrylic can't
+    // sample a swap chain, so the stage frosts itself. 0 is sharp, 1 fully frosted.
+    float frost=0;static constexpr float kFrostResolution=.25f,kFrostDeviation=20;
+    winrt::com_ptr<ID3D11Texture2D> frost_texture;winrt::com_ptr<ID3D11RenderTargetView> frost_view;winrt::com_ptr<ID2D1Bitmap1> frost_in,frost_out;
     static constexpr float kStroke=3,kHaloDeviation=5,kHaloGain=3.4f,kBloomDeviation=24,kBloomGain=1.6f;
     static constexpr float kGlowResolution=.5f; // the glow is only blur, so half resolution looks the same
     float bloom_scale=1;
@@ -91,83 +100,16 @@ struct StageChain {
     D2D1_COLOR_F glow_colour{0,0,0,0};
     uint64_t sequence=0,presents=0;
     StageTimers timers;
-    // ---- The line shader (0.5.17) ----
-    // Direct2D's antialiased strokes of long curved lines were most of the stage's GPU time: about
-    // half for the crisp lines and a quarter for the glow strokes at 2560x1600 (measured with parts
-    // switched off, 4 Nov 2026). Each line is now a strip of quads, two vertices per point, offset
-    // along the line's normal, all drawn by the GPU in one call. The pixel shader works out each
-    // pixel's coverage from its distance across the line, so edges stay smooth. Neighbouring quads
-    // share their edge exactly, so a translucent line never doubles up at its joins.
-    struct LineVertex{float x,y,across,half,r,g,b,a;};
-    winrt::com_ptr<ID3D11DeviceContext> d3dc;
-    winrt::com_ptr<ID3D11VertexShader> line_vs;winrt::com_ptr<ID3D11PixelShader> line_ps;winrt::com_ptr<ID3D11InputLayout> line_layout;
-    winrt::com_ptr<ID3D11Buffer> line_buffer,line_constants;winrt::com_ptr<ID3D11BlendState> line_blend;winrt::com_ptr<ID3D11RasterizerState> line_raster;
+    LinePipeline lines; // the line shader (line_pipeline.hpp)
     winrt::com_ptr<ID3D11RenderTargetView> back_view,glow_view;winrt::com_ptr<ID3D11Texture2D> glow_texture;
-    UINT line_capacity=0;std::vector<LineVertex> line_vertices;
-    void create_line_pipeline(){
-        static constexpr char source[]=
-            "cbuffer Target:register(b0){float2 size;float2 unused;};\n"
-            "struct In{float2 p:POSITION;float across:ACROSS;float half:HALF;float4 c:COLOR;};\n"
-            "struct Out{float4 p:SV_Position;float across:ACROSS;float half:HALF;float4 c:COLOR;};\n"
-            "Out vs(In v){Out o;o.p=float4(v.p.x/size.x*2-1,1-v.p.y/size.y*2,0,1);o.across=v.across;o.half=v.half;o.c=v.c;return o;}\n"
-            "float4 ps(Out i):SV_Target{return i.c*saturate(i.half+.5-abs(i.across));}\n";
-        const auto compile=[&](const char* entry,const char* profile){winrt::com_ptr<ID3DBlob> code,errors;
-            if(FAILED(D3DCompile(source,sizeof(source)-1,"stage_lines",nullptr,nullptr,entry,profile,D3DCOMPILE_OPTIMIZATION_LEVEL3,0,code.put(),errors.put())))
-                throw std::runtime_error(errors?static_cast<const char*>(errors->GetBufferPointer()):"Line shader did not compile.");
-            return code;};
-        auto vcode=compile("vs","vs_4_0"),pcode=compile("ps","ps_4_0");
-        winrt::check_hresult(d3d->CreateVertexShader(vcode->GetBufferPointer(),vcode->GetBufferSize(),nullptr,line_vs.put()));
-        winrt::check_hresult(d3d->CreatePixelShader(pcode->GetBufferPointer(),pcode->GetBufferSize(),nullptr,line_ps.put()));
-        const D3D11_INPUT_ELEMENT_DESC layout[]{{"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},{"ACROSS",0,DXGI_FORMAT_R32_FLOAT,0,8,D3D11_INPUT_PER_VERTEX_DATA,0},
-            {"HALF",0,DXGI_FORMAT_R32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0},{"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0}};
-        winrt::check_hresult(d3d->CreateInputLayout(layout,4,vcode->GetBufferPointer(),vcode->GetBufferSize(),line_layout.put()));
-        D3D11_BUFFER_DESC constants{16,D3D11_USAGE_DYNAMIC,D3D11_BIND_CONSTANT_BUFFER,D3D11_CPU_ACCESS_WRITE,0,0};winrt::check_hresult(d3d->CreateBuffer(&constants,nullptr,line_constants.put()));
-        // Premultiplied source-over, the same blending the Polylines and Direct2D strokes had.
-        D3D11_BLEND_DESC blend{};auto& rt=blend.RenderTarget[0];rt.BlendEnable=TRUE;rt.SrcBlend=rt.SrcBlendAlpha=D3D11_BLEND_ONE;rt.DestBlend=rt.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
-        rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;rt.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;winrt::check_hresult(d3d->CreateBlendState(&blend,line_blend.put()));
-        D3D11_RASTERIZER_DESC raster{};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;winrt::check_hresult(d3d->CreateRasterizerState(&raster,line_raster.put()));
-        d3dc=nullptr;d3d->GetImmediateContext(d3dc.put());line_capacity=0;line_buffer=nullptr;
-    }
-    // One line as a strip of quads: points in DIPs, moved by (dx,dy), scaled to pixels.
-    void add_line(std::vector<dusk::WavePoint> const& points,float dx,float dy,float scale,float half,float r,float g,float b,float a){
-        if(points.size()<2||a<=0)return;
-        const float reach=half+1; // one pixel beyond the edge, for the antialiasing
-        const size_t n=points.size();std::vector<std::array<float,4>> side(n);
-        for(size_t k=0;k<n;++k){
-            const auto& before=points[k?k-1:k];const auto& after=points[k+1<n?k+1:k];
-            float tx=after.x-before.x,ty=after.y-before.y;const float length=std::sqrt(tx*tx+ty*ty);if(length>0){tx/=length;ty/=length;}else{tx=1;ty=0;}
-            const float x=(points[k].x+dx)*scale,y=(points[k].y+dy)*scale,nx=-ty*reach,ny=tx*reach;
-            side[k]={x-nx,y-ny,x+nx,y+ny};
-        }
-        for(size_t k=0;k+1<n;++k){
-            const LineVertex l0{side[k][0],side[k][1],-reach,half,r,g,b,a},r0{side[k][2],side[k][3],reach,half,r,g,b,a},
-                             l1{side[k+1][0],side[k+1][1],-reach,half,r,g,b,a},r1{side[k+1][2],side[k+1][3],reach,half,r,g,b,a};
-            line_vertices.insert(line_vertices.end(),{l0,r0,l1,r0,r1,l1});
-        }
-    }
-    void flush_lines(ID3D11RenderTargetView* view,float width,float height){
-        if(line_vertices.empty())return;
-        const UINT count=static_cast<UINT>(line_vertices.size());
-        if(count>line_capacity){line_capacity=count+count/2;line_buffer=nullptr;D3D11_BUFFER_DESC desc{static_cast<UINT>(line_capacity*sizeof(LineVertex)),D3D11_USAGE_DYNAMIC,D3D11_BIND_VERTEX_BUFFER,D3D11_CPU_ACCESS_WRITE,0,0};winrt::check_hresult(d3d->CreateBuffer(&desc,nullptr,line_buffer.put()));}
-        D3D11_MAPPED_SUBRESOURCE mapped{};winrt::check_hresult(d3dc->Map(line_buffer.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));memcpy(mapped.pData,line_vertices.data(),count*sizeof(LineVertex));d3dc->Unmap(line_buffer.get(),0);
-        winrt::check_hresult(d3dc->Map(line_constants.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));const float size[4]{width,height,0,0};memcpy(mapped.pData,size,sizeof(size));d3dc->Unmap(line_constants.get(),0);
-        // Direct2D shares this device and leaves its own state behind: set everything the draw uses.
-        const UINT stride=sizeof(LineVertex),offset=0;ID3D11Buffer* buffers[]{line_buffer.get()};ID3D11Buffer* cbs[]{line_constants.get()};
-        d3dc->IASetInputLayout(line_layout.get());d3dc->IASetVertexBuffers(0,1,buffers,&stride,&offset);d3dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        d3dc->VSSetShader(line_vs.get(),nullptr,0);d3dc->VSSetConstantBuffers(0,1,cbs);d3dc->PSSetShader(line_ps.get(),nullptr,0);
-        d3dc->GSSetShader(nullptr,nullptr,0);d3dc->HSSetShader(nullptr,nullptr,0);d3dc->DSSetShader(nullptr,nullptr,0);
-        d3dc->RSSetState(line_raster.get());const D3D11_VIEWPORT viewport{0,0,width,height,0,1};d3dc->RSSetViewports(1,&viewport);
-        const float factor[4]{};d3dc->OMSetBlendState(line_blend.get(),factor,0xffffffff);d3dc->OMSetDepthStencilState(nullptr,0);
-        ID3D11RenderTargetView* views[]{view};d3dc->OMSetRenderTargets(1,views,nullptr);
-        d3dc->Draw(count,0);
-        ID3D11RenderTargetView* none[]{nullptr};d3dc->OMSetRenderTargets(1,none,nullptr);
-        line_vertices.clear();
-    }
+    winrt::com_ptr<ID3D11DeviceContext> d3dc;
+    std::filesystem::path capture; // development (--stage-bench): the next frame is saved here as a BMP
+    void save_capture(){save_chain_capture(chain.get(),d3d.get(),d3dc.get(),capture);capture.clear();}
     void attach(winrt::Microsoft::UI::Xaml::Controls::SwapChainPanel const& value){panel=value;}
     void reset(){
         if(context)context->SetTarget(nullptr);
-        target=nullptr;glow_in=nullptr;glow_out=nullptr;blur=normalise=halo=halo_gain=glow=tint=nullptr;
-        back_view=nullptr;glow_view=nullptr;glow_texture=nullptr;line_buffer=nullptr;line_constants=nullptr;line_vs=nullptr;line_ps=nullptr;line_layout=nullptr;line_blend=nullptr;line_raster=nullptr;d3dc=nullptr;
+        target=nullptr;glow_in=nullptr;glow_out=nullptr;blur=normalise=halo=halo_gain=glow=tint=frost_blur=nullptr;fade_down=nullptr;fade_up=nullptr;frost_texture=nullptr;frost_view=nullptr;frost_in=nullptr;frost_out=nullptr;
+        back_view=nullptr;glow_view=nullptr;glow_texture=nullptr;lines=LinePipeline{};d3dc=nullptr;
         context=nullptr;device=nullptr;factory=nullptr;chain=nullptr;d3d=nullptr;pixel_width=pixel_height=0;
     }
     void create(unsigned w,unsigned h){
@@ -187,7 +129,7 @@ struct StageChain {
         if(auto device1=d3d.try_as<IDXGIDevice1>())device1->SetMaximumFrameLatency(1);
         winrt::check_hresult(panel.as<ISwapChainPanelNative>()->SetSwapChain(chain.get()));
         timers.create(d3d.get());
-        create_line_pipeline();
+        lines.create(d3d.get());d3dc=lines.d3dc;
         pixel_width=w;pixel_height=h;
     }
     void build_effects(){
@@ -202,14 +144,18 @@ struct StageChain {
         glow->SetInputEffect(0,halo_gain.get());glow->SetInputEffect(1,normalise.get());
         winrt::check_hresult(context->CreateEffect(CLSID_D2D1ColorMatrix,tint.put()));tint->SetInputEffect(0,glow.get());
         winrt::check_hresult(tint->SetValue(D2D1_COLORMATRIX_PROP_CLAMP_OUTPUT,TRUE));
+        winrt::check_hresult(context->CreateEffect(CLSID_D2D1GaussianBlur,frost_blur.put()));winrt::check_hresult(frost_blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION,kFrostDeviation));
+        winrt::check_hresult(frost_blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE,D2D1_BORDER_MODE_SOFT));winrt::check_hresult(frost_blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION,D2D1_GAUSSIANBLUR_OPTIMIZATION_SPEED));
     }
     void draw_once(dusk::WaveFrame const& frame){
         const auto started=std::chrono::steady_clock::now();
         scale_x=panel.CompositionScaleX();scale_y=panel.CompositionScaleY();
-        const unsigned w=std::max(1u,static_cast<unsigned>(std::ceil(frame.width*scale_x))),h=std::max(1u,static_cast<unsigned>(std::ceil(frame.height*scale_y)));
+        // The chain covers the whole page (see Dusk.xaml); the waves are drawn in its top part, the stage.
+        const double page_width=std::max(frame.width,panel.ActualWidth()),page_height=std::max(frame.height,panel.ActualHeight());
+        const unsigned w=std::max(1u,static_cast<unsigned>(std::ceil(page_width*scale_x))),h=std::max(1u,static_cast<unsigned>(std::ceil(page_height*scale_y)));
         if(!chain)create(w,h);
         else if(w!=pixel_width||h!=pixel_height){
-            context->SetTarget(nullptr);target=nullptr;glow_in=nullptr;glow_out=nullptr;back_view=nullptr;glow_view=nullptr;glow_texture=nullptr;d3dc->ClearState();d3dc->Flush();
+            context->SetTarget(nullptr);target=nullptr;glow_in=nullptr;glow_out=nullptr;back_view=nullptr;glow_view=nullptr;glow_texture=nullptr;frost_texture=nullptr;frost_view=nullptr;frost_in=nullptr;frost_out=nullptr;d3dc->ClearState();d3dc->Flush();
             winrt::check_hresult(chain->ResizeBuffers(2,w,h,DXGI_FORMAT_UNKNOWN,0));pixel_width=w;pixel_height=h;
         }
         // The panel shows the buffer at its DIP size: undo the composition scale it applies.
@@ -235,6 +181,24 @@ struct StageChain {
             winrt::check_hresult(context->CreateBitmapFromDxgiSurface(glow_texture.as<IDXGISurface>().get(),&input,glow_in.put()));
             winrt::check_hresult(context->CreateBitmap(size,nullptr,0,&props,glow_out.put()));
         }
+        const bool frosted=frost>.001f,sharp=frost<.999f;
+        const float frost_dpi=dpi*kFrostResolution;
+        if(frosted&&!frost_in){
+            D3D11_TEXTURE2D_DESC desc{std::max(1u,static_cast<unsigned>(std::ceil(frame.width*scale_x*kFrostResolution))),std::max(1u,static_cast<unsigned>(std::ceil(frame.height*scale_y*kFrostResolution))),1,1,DXGI_FORMAT_B8G8R8A8_UNORM,{1,0},D3D11_USAGE_DEFAULT,D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE,0,0};
+            winrt::check_hresult(d3d->CreateTexture2D(&desc,nullptr,frost_texture.put()));winrt::check_hresult(d3d->CreateRenderTargetView(frost_texture.get(),nullptr,frost_view.put()));
+            const auto input=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE,D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),frost_dpi,frost_dpi);
+            winrt::check_hresult(context->CreateBitmapFromDxgiSurface(frost_texture.as<IDXGISurface>().get(),&input,frost_in.put()));
+            const auto out=D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM,D2D1_ALPHA_MODE_PREMULTIPLIED),frost_dpi,frost_dpi);
+            winrt::check_hresult(context->CreateBitmap({desc.Width,desc.Height},nullptr,0,&out,frost_out.put()));
+        }
+        const auto ink_colour=D2D1::ColorF(frame.ink);
+        if(frosted){
+            // The lines at a quarter of the resolution, for the frost.
+            const float zero[4]{};d3dc->ClearRenderTargetView(frost_view.get(),zero);const float s=scale_x*kFrostResolution;
+            for(int i=0;i<frame.count;++i){const float a=frame.alpha[static_cast<size_t>(i)];
+                lines.add_line(frame.lines[static_cast<size_t>(i)],0,0,s,std::max(.5f,frame.stroke[static_cast<size_t>(i)]/2*s),ink_colour.r*a,ink_colour.g*a,ink_colour.b*a,a,frame.soft[static_cast<size_t>(i)]*s);}
+            D3D11_TEXTURE2D_DESC desc{};frost_texture->GetDesc(&desc);lines.flush(frost_view.get(),static_cast<float>(desc.Width),static_cast<float>(desc.Height));
+        }
         timers.begin();
         std::array<int,dusk::WaveFrame::kLines> by_weight{};for(int i=0;i<frame.count;++i)by_weight[i]=i;
         std::stable_sort(by_weight.begin(),by_weight.begin()+frame.count,[&](int a,int b){return frame.weight[a]<frame.weight[b];});
@@ -243,8 +207,8 @@ struct StageChain {
             //    lines first: white source-over never passes full white, so crossings cannot flare.
             const float zero[4]{};d3dc->ClearRenderTargetView(glow_view.get(),zero);
             const float glow_scale=scale_x*kGlowResolution;
-            for(int n=0;n<frame.count;++n){const int i=by_weight[n];const float wgt=frame.weight[static_cast<size_t>(i)];add_line(frame.lines[static_cast<size_t>(i)],pad,pad,glow_scale,kStroke/2*glow_scale,wgt,wgt,wgt,wgt);}
-            D3D11_TEXTURE2D_DESC desc{};glow_texture->GetDesc(&desc);flush_lines(glow_view.get(),static_cast<float>(desc.Width),static_cast<float>(desc.Height));
+            for(int n=0;n<frame.count;++n){const int i=by_weight[n];const float wgt=frame.weight[static_cast<size_t>(i)];lines.add_line(frame.lines[static_cast<size_t>(i)],pad,pad,glow_scale,kStroke/2*glow_scale,wgt,wgt,wgt,wgt);}
+            D3D11_TEXTURE2D_DESC desc{};glow_texture->GetDesc(&desc);lines.flush(glow_view.get(),static_cast<float>(desc.Width),static_cast<float>(desc.Height));
             timers.stamp(1);
         }
         context->BeginDraw();
@@ -259,18 +223,36 @@ struct StageChain {
             context->SetTarget(glow_out.get());context->SetDpi(glow_dpi,glow_dpi);context->SetTransform(D2D1::Matrix3x2F::Identity());context->Clear(D2D1::ColorF(0,0));context->DrawImage(tint.get());
             blur->SetInput(0,nullptr);halo->SetInput(0,nullptr);
         }else timers.stamp(1);
+        if(frosted){
+            frost_blur->SetInput(0,frost_in.get());
+            context->SetTarget(frost_out.get());context->SetDpi(frost_dpi,frost_dpi);context->SetTransform(D2D1::Matrix3x2F::Identity());context->Clear(D2D1::ColorF(0,0));context->DrawImage(frost_blur.get());
+            frost_blur->SetInput(0,nullptr);
+        }
         // 3. The stage: black, the glow scaled up, then the crisp lines at full resolution.
+        //    Frosting crossfades the sharp lines into their blurred copy.
         context->SetTarget(target.get());context->SetDpi(dpi,dpi);context->SetTransform(D2D1::Matrix3x2F::Identity());context->Clear(D2D1::ColorF(0,0,0,1));
         if(glowing){const auto size=glow_out->GetSize();context->DrawBitmap(glow_out.get(),D2D1::RectF(-pad,-pad,size.width-pad,size.height-pad),1,D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);}
+        if(frosted){const auto size=frost_out->GetSize();context->DrawBitmap(frost_out.get(),D2D1::RectF(0,0,size.width,size.height),frost,D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);}
+        if(glowing||frosted){
+            if(!fade_down){
+                const D2D1_GRADIENT_STOP stops[]{{0,D2D1::ColorF(0,0,0,0)},{.55f,D2D1::ColorF(0,0,0,.6f)},{1,D2D1::ColorF(0,0,0,1)}};winrt::com_ptr<ID2D1GradientStopCollection> collection;
+                winrt::check_hresult(context->CreateGradientStopCollection(stops,3,collection.put()));
+                winrt::check_hresult(context->CreateLinearGradientBrush({},collection.get(),fade_down.put()));winrt::check_hresult(context->CreateLinearGradientBrush({},collection.get(),fade_up.put()));
+            }
+            const float fw=static_cast<float>(frame.width),fh=static_cast<float>(frame.height),bottom=std::min(kBottomFade,fh*.25f),top=std::max(1.f,frame.fade);
+            fade_down->SetStartPoint({0,fh-bottom});fade_down->SetEndPoint({0,fh});context->FillRectangle(D2D1::RectF(0,fh-bottom,fw,fh),fade_down.get());
+            fade_up->SetStartPoint({0,top});fade_up->SetEndPoint({0,0});context->FillRectangle(D2D1::RectF(0,0,fw,top),fade_up.get());
+        }
         winrt::check_hresult(context->EndDraw());timers.stamp(2);
         {
             // 4. The crisp lines, by the line shader, straight into the frame.
-            const auto ink_colour=D2D1::ColorF(frame.ink);
-            for(int i=0;i<frame.count;++i){const float a=frame.alpha[static_cast<size_t>(i)];
-                add_line(frame.lines[static_cast<size_t>(i)],0,0,scale_x,frame.stroke[static_cast<size_t>(i)]/2*scale_x,ink_colour.r*a,ink_colour.g*a,ink_colour.b*a,a);}
-            flush_lines(back_view.get(),static_cast<float>(pixel_width),static_cast<float>(pixel_height));
+            if(sharp)for(int i=0;i<frame.count;++i){const float a=frame.alpha[static_cast<size_t>(i)]*(1-frost);
+                lines.add_line(frame.lines[static_cast<size_t>(i)],0,0,scale_x,frame.stroke[static_cast<size_t>(i)]/2*scale_x,ink_colour.r*a,ink_colour.g*a,ink_colour.b*a,a,frame.soft[static_cast<size_t>(i)]*scale_x);}
+            lines.flush(back_view.get(),static_cast<float>(pixel_width),static_cast<float>(pixel_height),frame.fade*scale_x,static_cast<float>(frame.height)*scale_y);
         }
+        lines.dither(back_view.get(),static_cast<float>(pixel_width),static_cast<float>(pixel_height));
         timers.stamp(3);
+        if(!capture.empty())save_capture();
         winrt::check_hresult(chain->Present(1,0));
         timers.end(glowing,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count());
         sequence=frame.sequence;++presents;

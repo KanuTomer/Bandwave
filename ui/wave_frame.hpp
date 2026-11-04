@@ -14,7 +14,8 @@ struct WaveFrame {
     std::array<float,kLines> weight{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1}; // each line's share of the glow (the outer ones fade)
     int count=kLines; // lines in use; the editor's curve uses one
     // The crisp lines (StageChain): each line's opacity and stroke width in DIPs, in one colour.
-    std::array<float,kLines> alpha{},stroke{};
+    std::array<float,kLines> alpha{},stroke{},soft{}; // soft: width of each line's soft edge in DIPs (out of focus)
+    float fade=0; // the crisp lines fade out over this many DIPs at the top and bottom of the stage
     unsigned ink=0xF2F2F2;
     bool open_ends=false; // a line that ends inside the surface, so its glow rounds off around the ends
     bool valid_after(uint64_t previous) const {if(sequence<=previous||width<=0||height<=0)return false;for(int i=0;i<count;++i)if(lines[i].size()<2)return false;return true;}
