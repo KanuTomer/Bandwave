@@ -41,7 +41,7 @@ without reaching for your phone.
 |---|---|---|
 | ![The EQ library open as frosted glass over the moving sound lines: two EQs on the earbuds, six on the main screen, and everything else](docs/images/library.png) | ![The EQ editor with music playing: the curve filled with a soft glow, a live analyser behind it, and the Clear Bass column on the left](docs/images/editor.png) | ![Hold to compare: the edited curve, with how it was shown as a dashed line](docs/images/compare.png) |
 
-![Settings: sound, voice and sounds, wearing and power, and touch controls, around a picture of the earbuds](docs/images/settings.png)
+![Settings around a picture of the earbuds: sound, voice and sounds (with connecting to two devices and hearing your voice on calls), wearing and power, and touch controls](docs/images/settings.png)
 
 ## Install
 
