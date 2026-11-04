@@ -12,7 +12,7 @@ target_include_directories(EarbudControls.UI BEFORE PRIVATE "${CMAKE_BINARY_DIR}
 target_compile_definitions(EarbudControls.UI PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(EarbudControls.UI PRIVATE /W4 /utf-8 /bigobj /EHsc)
 # The bootstrapper is only used by unpackaged local runs, so the installed app never loads it.
-target_link_libraries(EarbudControls.UI PRIVATE windowsapp comctl32 ksuser d3d11 d2d1 dxgi dxguid delayimp crypt32 wintrust bcrypt shell32
+target_link_libraries(EarbudControls.UI PRIVATE windowsapp comctl32 ksuser d3d11 d3dcompiler d2d1 dxgi dxguid delayimp crypt32 wintrust bcrypt shell32
   "${EARBUD_UI_SDK}/microsoft.windowsappsdk.foundation/lib/native/x64/Microsoft.WindowsAppRuntime.Bootstrap.lib")
 target_link_options(EarbudControls.UI PRIVATE "/DELAYLOAD:Microsoft.WindowsAppRuntime.Bootstrap.dll")
 set_target_properties(EarbudControls.UI PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

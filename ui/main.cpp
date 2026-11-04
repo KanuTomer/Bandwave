@@ -49,6 +49,7 @@
 #include "updates.hpp"
 #include "spectrum.hpp"
 #include "wave_brush.hpp"
+#include "stage_chain.hpp"
 
 using namespace winrt;
 using namespace Microsoft::UI::Xaml;
@@ -82,7 +83,7 @@ static std::wstring review_view = L"Main", review_pass = L"pass1";
 static int initial_width = 1280, initial_height = 800;
 static fs::path review_timeline;
 static double review_time = 30;
-static bool review_sequence = false, review_motion = false, review_wave_motion=false;
+static bool review_sequence = false, review_motion = false, review_wave_motion=false, stage_bench=false; // stage_bench: 25 s of the stage with demo music and GPU timers (development only)
 
 static Color rgba(unsigned rgb, double alpha = 1) {
     return Color{static_cast<uint8_t>(std::clamp(alpha, 0.0, 1.0) * 255 + .5), static_cast<uint8_t>(rgb >> 16), static_cast<uint8_t>(rgb >> 8), static_cast<uint8_t>(rgb)};
@@ -97,12 +98,24 @@ static constexpr double kLightAlpha = .28;
 
 // One line of the sound field, as an offset from the middle of the stage before scaling. The noise
 // mode sets the line's character, and the EQ being heard bends every line into its shape.
+// 15 lines (9 until 0.5.11). Spacing is unchanged where the stage has room; line_gap narrows it so
+// the outermost line and its sway stay inside the stage. The outer lines fade and thin towards the
+// edges, so the stack tapers instead of ending in a hard line.
+static constexpr int kFieldLines = dusk::WaveFrame::kLines;
+static constexpr double kLineMiddle = (kFieldLines - 1) / 2.0;
+static double line_gap = 1;
+// 1 for the middle lines, falling smoothly to .3 at the outermost.
+static double line_taper(int line) {
+    const double d = std::abs(line - kLineMiddle) / kLineMiddle, inner = 4 / kLineMiddle;
+    const double t = std::clamp((d - inner) / (1 - inner), 0.0, 1.0);
+    return 1 - .7 * t * t * (3 - 2 * t);
+}
 static double field_offset(dusk::Noise noise, dusk::Curve const& curve, int line, double x) {
     const double bend = -5.5 * dusk::eq_bend(curve, std::clamp(x / 640, -1.0, 1.0));
     switch (noise) {
-    case dusk::Noise::Ambient: return (line - 4) * 30 + 15 * std::sin(x * .012 + line * .7) + bend;
+    case dusk::Noise::Ambient: return (line - kLineMiddle) * 30 * line_gap + 15 * std::sin(x * .012 + line * .7) + bend;
     case dusk::Noise::Off: return bend;
-    default: return (line - 4) * 26 + 30 * std::pow(std::clamp((std::abs(x) - 300) / 340, 0.0, 1.0), 1.5) * std::sin(x * .028 + line * .7) + bend;
+    default: return (line - kLineMiddle) * 26 * line_gap + 30 * std::pow(std::clamp((std::abs(x) - 300) / 340, 0.0, 1.0), 1.5) * std::sin(x * .028 + line * .7) + bend;
     }
 }
 static double field_alpha(dusk::Noise noise) { return noise == dusk::Noise::Ambient ? .46 : noise == dusk::Noise::Off ? .05 : .34; }
@@ -169,7 +182,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     double frame_seconds=.016;
     std::array<double, dusk::kBands> pulse{};
     Glow light;
-    winrt::com_ptr<WaveBrush> wave_brush, curve_brush;
+    winrt::com_ptr<WaveBrush> curve_brush; // the EQ editor's curve glow
+    StageChain stage; // the main stage's lines and glow
     dusk::WaveFrame curve_frame;std::vector<Point> curve_cache;bool curve_glow_stale=true;
     dusk::WaveFrame wave_frame;uint64_t line_sequence=0;
     bool closing=false;
@@ -201,8 +215,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     CompositeTransform dither_transform;
     Dispatching::DispatcherQueueTimer timer{nullptr};
     double blend = 1;
-    struct FieldLine { Shapes::Polyline line{nullptr}; SolidColorBrush stroke{nullptr}; std::vector<float> from, to, now; double from_alpha{}, to_alpha{}, alpha{}; };
-    std::array<FieldLine, 9> field;
+    struct FieldLine { std::vector<float> from, to, now; double from_alpha{}, to_alpha{}, alpha{}; };
+    std::array<FieldLine, kFieldLines> field;
     double field_width = 0, field_scale = 1, field_x = 0, field_y = 0;
     std::array<double, 6> eq_shown{}, eq_from{};
     double eq_blend = 1;
@@ -414,7 +428,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void build_haze(){
         show(L"Haze",false);
         if(high_contrast){
-            show(L"FieldLines",false);
+            show(L"WaveChain",false);
             for(Pill* pill:{&noise_pill,&bank_pill,&eq_pill})pill->border.Visibility(Visibility::Collapsed);
             for(auto name:{L"NoiseHost",L"BankHost",L"EqBankHost"})get<FrameworkElement>(name).Resources().Clear();
             root.Background(Application::Current().Resources().Lookup(box_value(L"ApplicationPageBackgroundThemeBrush")).as<Brush>());
@@ -435,11 +449,11 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void retarget() {
         if (high_contrast) return;
         blend = animations ? 0 : 1;
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < kFieldLines; ++i) {
             auto& item = field[static_cast<size_t>(i)];
             item.from = item.now;
             item.from_alpha = item.alpha;
-            item.to_alpha = field_alpha(model.noise);
+            item.to_alpha = field_alpha(model.noise) * line_taper(i);
             for (size_t k = 0; k < item.to.size(); ++k) item.to[k] = static_cast<float>(field_offset(model.noise, model.heard(), i, (static_cast<double>(k) * kFieldStep - dusk::WaveFrame::padding - field_x) / field_scale) * field_scale + field_y);
         }
         if (animations) wake();
@@ -589,25 +603,20 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // compositor animation restarted every 33 ms kept Windows recomposing the whole window at the
     // display's rate (120 Hz here) instead of the app's 30 frames: dwm used about 27% of the GPU
     // for it (0.5.7, 2560x1600). The colour already changes every frame, so nothing is lost.
-    void submit_wave_frame(){
-        if(closing||glow_level<=0||page!=L"Main"||drawer_open||high_contrast||!root.XamlRoot()||wave_frame.sequence==0||wave_frame.height<=0)return;
-        CostScope cost{"mask_submission"};
-        if(!wave_brush){wave_brush=winrt::make_self<WaveBrush>();wave_brush->initialise(Hosting::ElementCompositionPreview::GetElementVisual(root).Compositor());get<Shapes::Rectangle>(L"WaveGlow").Fill(wave_brush.as<Brush>());}
-        wave_frame.dpi=root.XamlRoot().RasterizationScale();wave_brush->draw(wave_frame);
-        if(line_sequence!=wave_brush->sequence)throw std::runtime_error("Wave and glow frame sequences differ.");
+    void draw_stage(){
+        if(closing||high_contrast||page!=L"Main"||wave_frame.sequence==0||wave_frame.height<=0)return;
+        CostScope cost{"draw_stage"};
+        if(!stage.panel){if(std::error_code e;fs::exists(earbud::data_folder()/L"gpu-timing.on",e))stage.timers.log=earbud::data_folder()/L"gpu-timing.csv";if(stage_bench){stage.timers.log=directory.parent_path().parent_path()/L"review"/review_pass/L"gpu-timing.csv";std::error_code e;fs::create_directories(stage.timers.log.parent_path(),e);fs::remove(stage.timers.log,e);}stage.bloom_scale=.775f;/* sqrt(9/15): the bloom was tuned for 9 lines, and 15 would wash out the centre */stage.attach(get<Controls::SwapChainPanel>(L"WaveChain"));}
+        stage.draw(wave_frame);
     }
     void apply_light() {
         CostScope cost{"apply_light"};
         show(L"Haze",false);
         // No glow at all in silence; it fades in with the music and out after it.
         const bool visible=page==L"Main"&&!drawer_open&&!high_contrast&&glow_level>0;
-        get<UIElement>(L"WaveGlow").Visibility(visible?Visibility::Visible:Visibility::Collapsed);
-        if(!visible)return;
-        submit_wave_frame();
-        if(wave_brush){
-            double energy=0;for(auto value:pulse)energy+=value/dusk::kBands;const double level=ease(glow_level);auto colour=rgba(dusk::spectrum_color(phase),level*(.24+.10*std::min(1.0,energy*1.4)));wave_brush->set_colour(colour,false); // see kNoColourEasing
-
-        }
+        if(!visible){stage.set_colour(rgba(0,0));return;} // the next stage frame draws without glow
+        double energy=0;for(auto value:pulse)energy+=value/dusk::kBands;const double level=ease(glow_level);
+        stage.set_colour(rgba(dusk::spectrum_color(phase),level*(.24+.10*std::min(1.0,energy*1.4))));
     }
 
     // ---------- Main screen ----------
@@ -634,32 +643,29 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         add(L"NoiseOff", dusk::Noise::Off);
         sync_noise(false);
     }
-    static constexpr int kFieldStep = 8;
+    // A point every 12 DIPs (8 until 0.5.11): the shortest wave is about 220 DIPs long, so the lines
+    // stay smooth, and with 15 lines it is a third less work for the lines and their glow.
+    static constexpr int kFieldStep = 12;
     void draw_field() {
         auto stage = get<Grid>(L"Stage");
         const double w = stage.ActualWidth(), h = stage.ActualHeight();
         if (w < 10 || h < 10 || high_contrast) return;
         field_scale = std::min({1.0, (w - 32) / 780, (h - 16) / 280});
+        // The outermost line plus its wave and the music's sway (about 45 units) stays 12 DIPs inside.
+        line_gap = std::clamp(((h / 2 - 12) / field_scale - 45) / (kLineMiddle * 30), .6, 1.0);
         RectangleGeometry clip;clip.Rect({0,0,static_cast<float>(w),static_cast<float>(h)});stage.Clip(clip);
         field_width = w;
         field_x = w / 2;
         field_y = h / 2;
         const double s = field_scale;
-        auto canvas = get<Canvas>(L"FieldLines");
-        canvas.Children().Clear();
         const size_t points = static_cast<size_t>((w+2*dusk::WaveFrame::padding) / kFieldStep) + 2;
-        for (int i = 0; i < 9; ++i) {
+        for (int i = 0; i < kFieldLines; ++i) {
             auto& item = field[static_cast<size_t>(i)];
-            item.line = Shapes::Polyline();
-            item.line.StrokeThickness(1.1);
-            item.line.StrokeLineJoin(PenLineJoin::Round);
-            item.stroke = SolidColorBrush();
-            item.line.Stroke(item.stroke);
-            canvas.Children().Append(item.line);
+            wave_frame.stroke[static_cast<size_t>(i)] = static_cast<float>(.8 + .3 * (line_taper(i) - .3) / .7);
             item.to.resize(points);
             for (size_t k = 0; k < points; ++k) item.to[k] = static_cast<float>(field_offset(model.noise, model.heard(), i, (static_cast<double>(k) * kFieldStep - dusk::WaveFrame::padding - field_x) / s) * s + field_y);
             item.from = item.now = item.to;
-            item.alpha = item.from_alpha = item.to_alpha = field_alpha(model.noise);
+            item.alpha = item.from_alpha = item.to_alpha = field_alpha(model.noise) * line_taper(i);
         }
         blend = 1;
         apply_field(0);
@@ -672,16 +678,14 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         CostScope cost{"apply_field"};
         if (field_width <= 0) return;
         const double center = field_x, s = field_scale;
-        std::vector<Point> points;
         int index = 0;
         ambient_mix += ((model.noise == dusk::Noise::Ambient ? 1.0 : 0.0) - ambient_mix) * std::min(1.0, frame_seconds * 3);
         presence += ((controls_live || render_review ? 1.0 : 0.0) - presence) * std::min(1.0, frame_seconds * 2.5);
         if (presence < .002) presence = 0;
         wave_frame.sequence++;wave_frame.width=field_width;wave_frame.height=get<Grid>(L"Stage").ActualHeight();wave_frame.time=now;
         for (auto& item : field) {
-            if (!item.line) return;
-            points.clear();
-            points.reserve(item.now.size());
+            if (item.now.empty()) return;
+            wave_frame.weight[static_cast<size_t>(index)] = static_cast<float>(line_taper(index));
             auto& shared=wave_frame.lines[static_cast<size_t>(index)];shared.clear();shared.reserve(item.now.size());
             const double ripple = blend;
             for (size_t k = 0; k < item.now.size(); ++k) {
@@ -700,14 +704,13 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 // swells crossfade as the mode changes, so the line never jumps.
                 const double swell = (1 - ambient_mix) * std::sin(x * .011 + now * 2 + index * .8) + ambient_mix * std::sin(x * .023 + now * 2.2 + index * .8);
                 const double sway = presence * (3.2 * std::sin(x * .005 + now * .35 + index * .6) + std::min(26.0, .5 + 24 * stir) * swell);
-                dusk::WavePoint point{static_cast<float>(x),item.now[k]+static_cast<float>(sway*s)};shared.push_back(point);points.push_back({point.x,point.y});
+                dusk::WavePoint point{static_cast<float>(x),item.now[k]+static_cast<float>(sway*s)};shared.push_back(point);
             }
-            item.line.Points().ReplaceAll(points);
             item.alpha = item.from_alpha + (item.to_alpha - item.from_alpha) * ease(blend);
-            item.stroke.Color(rgba(0xF2F2F2, item.alpha));
+            wave_frame.alpha[static_cast<size_t>(index)] = static_cast<float>(item.alpha);
             ++index;
         }
-        line_sequence=wave_frame.sequence;submit_wave_frame();
+        line_sequence=wave_frame.sequence;draw_stage();
     }
 
     // ---------- Curves ----------
@@ -793,7 +796,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             for (auto& point : line) { point.x += 12; point.y += 12; } // CurveGlow fills CurveArea; the canvas sits 12 inside
             curve_frame.open_ends = true; // the glow ends with the stroke and rounds off around its ends
             curve_frame.sequence++; curve_frame.width = plot_width + 24; curve_frame.height = plot_height + 24; curve_frame.dpi = root.XamlRoot().RasterizationScale();
-            for (auto& shared : curve_frame.lines) shared = line; // one shape: the union cannot add brightness
+            curve_frame.lines[0] = line; curve_frame.count = 1; // one shape
             curve_brush->draw(curve_frame); curve_glow_stale = false;
         }
         curve_brush->set_colour(rgba(dusk::spectrum_color(phase), ease(glow_level) * .28), false); // see kNoColourEasing
@@ -2279,7 +2282,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             const double scale=static_cast<double>(bitmap.PixelWidth())/initial_width;
             int middle=100;if(page==L"Main"){auto stage=get<Grid>(L"Stage");auto at=stage.TransformToVisual(root).TransformPoint({static_cast<float>(field_x),static_cast<float>(field_y)});middle=static_cast<int>(at.Y);}
             for(int y=middle-20;y<middle+20;++y)for(int x=initial_width/2-30;x<initial_width/2+30;++x){auto at=(static_cast<int>(y*scale)*bitmap.PixelWidth()+static_cast<int>(x*scale))*4;b+=bytes[at];g+=bytes[at+1];r+=bytes[at+2];++count;}
-            *samples<<seconds<<','<<phase<<','<<dusk::spectrum_color(phase)<<','<<r/count<<','<<g/count<<','<<b/count<<','<<line_sequence<<','<<(wave_brush?wave_brush->sequence:0)<<','<<(wave_brush?wave_brush->allocations:0)<<'\n';
+            *samples<<seconds<<','<<phase<<','<<dusk::spectrum_color(phase)<<','<<r/count<<','<<g/count<<','<<b/count<<','<<line_sequence<<','<<stage.sequence<<','<<stage.presents<<'\n';
         }
         Windows::Storage::Streams::InMemoryRandomAccessStream stream;
         auto encoder=co_await Windows::Graphics::Imaging::BitmapEncoder::CreateAsync(Windows::Graphics::Imaging::BitmapEncoder::PngEncoderId(),stream);
@@ -2349,6 +2352,12 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             std::wstring view = review_view;
             std::transform(view.begin(), view.end(), view.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
             const auto filename = view + L"-" + std::to_wstring(initial_width) + L"x" + std::to_wstring(initial_height);
+            if(stage_bench){
+                animations=true;demo_music=true;glow_level=1;navigate(L"Main");set_noise(dusk::Noise::Ambient);last_tick=precise_ms();
+                const auto until=GetTickCount64()+25000;
+                while(GetTickCount64()<until){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                animations=false;demo_music=false;
+            }
             if(profile_motion){
                 costs.clear();animations=true;demo_music=!profile_silent;last_tick=precise_ms();
                 std::ofstream intervals(folder/L"intervals.csv");intervals<<"frame,interval_ms\n";auto previous=GetTickCount64();
@@ -2363,7 +2372,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 std::ofstream summary(folder/L"costs.csv");summary<<"operation,milliseconds\n";for(auto const& sample:costs)summary<<sample.name<<','<<sample.ms<<'\n';
                 animations=false;demo_music=false;timer.Stop();model.editing=false;drawer_open=false;drawer_t=0;show(L"Drawer",false);navigate(L"Main");
             }
-            {std::ofstream state(folder/(filename+L"-state.csv"));state<<"page,glow_visible,all_label,eq_all_label\n"<<to_string(page)<<','<<(get<UIElement>(L"WaveGlow").Visibility()==Visibility::Visible)<<','<<to_string(get<TextBlock>(L"AllLabel").Text())<<','<<to_string(get<TextBlock>(L"EqAllLabel").Text())<<'\n';}
+            {std::ofstream state(folder/(filename+L"-state.csv"));state<<"page,glow_visible,all_label,eq_all_label\n"<<to_string(page)<<','<<(glow_level>0)<<','<<to_string(get<TextBlock>(L"AllLabel").Text())<<','<<to_string(get<TextBlock>(L"EqAllLabel").Text())<<'\n';}
             auto audio=read_timeline();
             export_layout(folder/(filename+L"-layout.csv"));
             std::ofstream samples(folder/(filename+L"-pixels.csv"));samples<<"seconds,phase,rgb,pixel_r,pixel_g,pixel_b,line_sequence,glow_sequence,surface_allocations\n";
@@ -2382,7 +2391,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                         if(scenario==7)pulse.fill(0);
                         else if(!audio.empty())apply_review_audio(audio,base+ms/1000.0);
                         apply_field(base+ms/1000.0);apply_light();
-                        frames<<scenario<<','<<ms<<','<<line_sequence<<','<<wave_brush->sequence<<','<<wave_brush->allocations<<','<<wave_frame.width<<','<<wave_frame.height<<','<<blend<<','<<wave_frame.lines[0].front().x<<','<<wave_frame.lines[0].back().x<<'\n';
+                        frames<<scenario<<','<<ms<<','<<line_sequence<<','<<stage.sequence<<','<<stage.presents<<','<<wave_frame.width<<','<<wave_frame.height<<','<<blend<<','<<wave_frame.lines[0].front().x<<','<<wave_frame.lines[0].back().x<<'\n';
                         co_await resume_after(std::chrono::milliseconds(30));co_await ui;co_await capture_review(folder/(L"wave-"+std::to_wstring(scenario)+L"-"+std::to_wstring(ms)+L".png"));
                     }
                 }
@@ -2390,7 +2399,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 std::ofstream resizing(folder/L"wave-resizes.csv");resizing<<"width,height,line_sequence,glow_sequence,allocations\n";
                 for(auto size:{std::pair{960,620},std::pair{1280,800},std::pair{1462,866}}){
                     initial_width=size.first;initial_height=size.second;root.Width(initial_width);root.Height(initial_height);RectangleGeometry bounds;bounds.Rect({0,0,float(initial_width),float(initial_height)});root.Clip(bounds);root.Measure({float(initial_width),float(initial_height)});root.Arrange({0,0,float(initial_width),float(initial_height)});root.UpdateLayout();draw_field();apply_field(base);apply_light();
-                    resizing<<initial_width<<','<<initial_height<<','<<line_sequence<<','<<wave_brush->sequence<<','<<wave_brush->allocations<<'\n';co_await resume_after(std::chrono::milliseconds(30));co_await ui;co_await capture_review(folder/(L"resize-"+std::to_wstring(initial_width)+L".png"));
+                    resizing<<initial_width<<','<<initial_height<<','<<line_sequence<<','<<stage.sequence<<','<<stage.presents<<'\n';co_await resume_after(std::chrono::milliseconds(30));co_await ui;co_await capture_review(folder/(L"resize-"+std::to_wstring(initial_width)+L".png"));
                 }
                 initial_width=original_width;initial_height=original_height;root.Width(initial_width);root.Height(initial_height);RectangleGeometry restored;restored.Rect({0,0,float(initial_width),float(initial_height)});root.Clip(restored);root.Measure({float(initial_width),float(initial_height)});root.Arrange({0,0,float(initial_width),float(initial_height)});root.UpdateLayout();draw_field();
                 model=original;animations=false;set_noise(dusk::Noise::Off);apply_field(0);apply_light();co_await capture_review(folder/L"reduced-motion.png");
@@ -2455,6 +2464,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command, int) {
     review_timeline=option(L"--audio-timeline=",L"");
     review_time=std::stod(option(L"--audio-time=",L"30"));
     review_wave_motion=args.find(L"--wave-motion-review")!=std::wstring::npos;
+    stage_bench=args.find(L"--stage-bench")!=std::wstring::npos;
     review_sequence=args.find(L"--sequence")!=std::wstring::npos;
     review_motion=args.find(L"--motion-review")!=std::wstring::npos;
     if((!review_timeline.empty()||review_sequence||review_motion)&&!render_review)return 2;

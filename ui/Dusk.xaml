@@ -83,8 +83,7 @@
   <Grid x:Name="MainPage" Grid.Row="1">
    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
    <Grid x:Name="Stage" AutomationProperties.AccessibilityView="Raw">
-    <Rectangle x:Name="WaveGlow" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
-    <Canvas x:Name="FieldLines" IsHitTestVisible="False"/>
+    <SwapChainPanel x:Name="WaveChain" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
     <Viewbox MaxWidth="548" MaxHeight="197" Margin="16,8" Stretch="Uniform" Opacity="0" IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw">
      <Grid Width="780" Height="280" ColumnSpacing="60">
       <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
