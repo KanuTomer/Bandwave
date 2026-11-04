@@ -31,6 +31,7 @@ public:
         if (worker_.joinable()) worker_.join();
         playing_ = false;
         for (auto& level : levels_) level = 0;
+        for (auto& level : fine_) level = 0;
     }
     bool playing() const { return playing_; }
     void accept_any_output(bool any) { any_output_ = any; }
@@ -39,12 +40,18 @@ public:
         for (size_t i = 0; i < kBands; ++i) out[i] = levels_[i];
         return out;
     }
+    std::array<float, kFine> fine() const {
+        std::array<float, kFine> out{};
+        for (size_t i = 0; i < kFine; ++i) out[i] = fine_[i];
+        return out;
+    }
 
 private:
     static constexpr int kSize = 2048, kHop = 1024;
     std::thread worker_;
     std::atomic<bool> running_{}, playing_{}, any_output_{};
     std::array<std::atomic<float>, kBands> levels_{};
+    std::array<std::atomic<float>, kFine> fine_{};
 
     static bool is_earbuds(IMMDevice* device) {
         winrt::com_ptr<IPropertyStore> store;
@@ -109,6 +116,7 @@ private:
                         sum += is_float ? reinterpret_cast<float*>(data)[f * channels + c] : reinterpret_cast<int16_t*>(data)[f * channels + c] / 32768.f;
                     analysis.push(sum / channels, rate, [&](auto const& bands) {
                         for (size_t i = 0; i < kBands; ++i) levels_[i] = bands[i];
+                        for (size_t i = 0; i < kFine; ++i) fine_[i] = analysis.fine[i];
                         if (*std::max_element(bands.begin(), bands.end()) > .02f) last_sound = GetTickCount64();
                     });
                 }

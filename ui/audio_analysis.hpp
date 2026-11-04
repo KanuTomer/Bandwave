@@ -3,10 +3,14 @@
 #include <complex>
 #include <vector>
 namespace dusk {
+// The EQ editor's analyser: 48 bands spaced evenly in pitch from 180 Hz to 20 kHz.
+inline constexpr size_t kFine = 48;
+inline float fine_edge(size_t i) { return 180.f * std::pow(20000.f / 180.f, static_cast<float>(i) / kFine); }
 // Identical PCM windowing and FFT for file tests and WASAPI loopback.
 struct AudioAnalysis {
     static constexpr int kSize = 2048, kHop = 1024;
     std::vector<float> ring = std::vector<float>(kSize), ordered = std::vector<float>(kSize);
+    std::array<float, kFine> fine{}; // filled alongside the seven bands
     int filled = 0, fresh = 0, write = 0;
     template<class Callback> void push(float sample, float rate, Callback callback) {
         ring[write] = sample; write = (write + 1) % kSize;
@@ -14,10 +18,10 @@ struct AudioAnalysis {
         if (filled == kSize && fresh >= kHop) {
             fresh = 0;
             for (int i = 0; i < kSize; ++i) ordered[i] = ring[(write + i) % kSize];
-            callback(analyse(ordered, rate));
+            callback(analyse(ordered, rate, &fine));
         }
     }
-    static std::array<float, kBands> analyse(const std::vector<float>& samples, float rate) {
+    static std::array<float, kBands> analyse(const std::vector<float>& samples, float rate, std::array<float, kFine>* fine = nullptr) {
         std::vector<std::complex<float>> x(kSize);
         for (int i = 0; i < kSize; ++i) x[i] = samples[i] * (0.5f - 0.5f * std::cos(6.2831853f * i / (kSize - 1)));
         for (int i = 1, j = 0; i < kSize; ++i) {
@@ -45,6 +49,12 @@ struct AudioAnalysis {
             for (int k = std::max(1, static_cast<int>(kBandEdges[b] / bin)); k <= std::min(kSize / 2 - 1, static_cast<int>(kBandEdges[b + 1] / bin)); ++k)
                 peak = std::max(peak, std::abs(x[k]) / (kSize / 4.f));
             out[b] = level_from_db(20 * std::log10(peak + 1e-9f));
+        }
+        if (fine) for (size_t b = 0; b < kFine; ++b) {
+            float peak = 0;
+            const int from = std::max(1, static_cast<int>(fine_edge(b) / bin)), to = std::max(from, std::min(kSize / 2 - 1, static_cast<int>(fine_edge(b + 1) / bin)));
+            for (int k = from; k <= to; ++k) peak = std::max(peak, std::abs(x[k]) / (kSize / 4.f));
+            (*fine)[b] = level_from_db(20 * std::log10(peak + 1e-9f));
         }
         return out;
     }
