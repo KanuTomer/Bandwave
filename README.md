@@ -1,36 +1,47 @@
 # Sound Connect
 
-**Sound Connect** is a Windows 11 app and Win + W widget for Sony **WF-C710N** earbuds. It lets
-you check the batteries, switch noise cancelling and ambient sound, and shape the sound with
-your own EQs, without reaching for your phone.
+**Sound Connect** is a Windows 11 app and Win + W widget for Sony **WF-C710N** earbuds. Check
+the batteries, switch noise cancelling and ambient sound, and shape the sound with your own EQs,
+without reaching for your phone.
 
-![Sound Connect's main screen: sound waves that move with your music, battery levels, the three sound modes and six EQs](docs/images/main.png)
+![Sound Connect's main screen with music playing: fifteen glowing sound lines in the music's colour above the battery levels, the three sound modes and six EQs](docs/images/main.png)
 
 ## What it does
 
+- **Watch your music:** fifteen lines on the main screen take the shape of the sound mode and
+  sway with the music, in a colour that follows it. The middle lines are sharp and the outer
+  ones soft, like a camera focused on the centre. With no music the lines drift quietly, and in
+  the tray Sound Connect draws nothing at all.
 - **See everything at a glance:** left, right and case batteries, and whether each earbud is
   connected.
-- **Switch sound modes instantly:** Noise cancelling, Ambient or Off. The waves on the main
-  screen take the shape of the mode and glow softly in time with your music.
+- **Switch sound modes instantly:** Noise cancelling, Ambient or Off.
 - **Keep an EQ library:** Sony's presets, with their real curves read from your earbuds, plus
-  as many of your own EQs as you like. Six of them sit on the main screen, one tap away.
-- **Edit with Sony's own controls:** five bands from 400 Hz to 16 kHz, plus Clear Bass. Changes
-  play on your earbuds as you make them. Hold to compare against how it sounded before, and
-  undo any step.
+  as many of your own EQs as you like. Six sit on the main screen, one tap away. The library
+  opens over the main screen as frosted glass, with the music still moving behind it.
+- **Edit by eye and by ear:** five bands from 400 Hz to 16 kHz, as in Sony's app. A live analyser
+  behind the curve shows what's playing on the same scale, so you can see what each band
+  touches. Changes play on your earbuds as you make them; undo any step.
+- **Compare as you go:** hold **Hold to compare** to hear how it was. Your curve stays put and the
+  old one shows as a dashed line.
+- **Clear Bass on its own:** Sony's bass processing isn't an EQ band, so it has its own glowing
+  column beside the graph.
 - **Find your EQ by ear:** three quick A/B rounds (low end, vocals, upper range) build an EQ
   from what you hear, not from numbers.
 - **Take two EQs with you:** keep any EQ in the earbuds' Custom 1 and Custom 2 slots, for your
   phone and other devices. What's already in those slots is imported the first time you connect.
 - **Change your earbuds' settings:** Bluetooth priority, DSEE, ambient level, voice focus, voice
-  guidance, touch controls, the noise cycle and power options. Only the settings your earbuds
-  support are shown.
+  guidance, touch controls, the noise cycle, power options, connecting to two devices at once
+  and hearing your own voice on calls. Only the settings your earbuds offer are shown.
 - **Use the widget:** batteries, sound mode and your six main EQs in Win + W, without opening
   the app.
-- **Keep it in the tray** when the window is closed, if you like.
+- **Start with Windows and keep it in the tray,** if you like. Both are in Settings > App and
+  widget.
 
-| Edit an EQ | Find your EQ | Your EQs |
+| The library | Editing an EQ | Hold to compare |
 |---|---|---|
-| ![The EQ editor: a curve across five bands from 400 Hz to 16 kHz, with Clear Bass below](docs/images/editor.png) | ![Find your EQ: choosing between two versions of the low end](docs/images/find-your-eq.png) | ![The EQ library: two EQs on the earbuds, six on the main screen, and everything else](docs/images/library.png) |
+| ![The EQ library open as frosted glass over the moving sound lines: two EQs on the earbuds, six on the main screen, and everything else](docs/images/library.png) | ![The EQ editor with music playing: the curve filled with a soft glow, a live analyser behind it, and the Clear Bass column on the left](docs/images/editor.png) | ![Hold to compare: the edited curve, with how it was shown as a dashed line](docs/images/compare.png) |
+
+![Settings: sound, voice and sounds, wearing and power, and touch controls, around a picture of the earbuds](docs/images/settings.png)
 
 ## Install
 
@@ -57,6 +68,12 @@ Sound Connect checks for a new version once a day. When one is out, choose **Upd
 title bar: it downloads, checks the file's checksum and signature, and updates in place,
 keeping your EQs and settings. You can turn the check off in Settings > App and widget. Running
 a newer setup yourself works the same way.
+
+## Good to know
+
+Changing **Connect to two devices at once** makes the earbuds drop every connection and reconnect;
+your phone may need reconnecting from its Bluetooth settings. Sound Connect asks before it
+changes it.
 
 ## Uninstall
 

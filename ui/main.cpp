@@ -88,7 +88,7 @@ static std::wstring review_view = L"Main", review_pass = L"pass1";
 static int initial_width = 1280, initial_height = 800;
 static fs::path review_timeline;
 static double review_time = 30;
-static bool review_sequence = false, review_motion = false, review_wave_motion=false, stage_bench=false; // stage_bench: 25 s of the stage with demo music and GPU timers (development only)
+static bool review_sequence = false, review_motion = false, review_wave_motion=false, stage_bench=false, readme_shots=false; // readme_shots: the README's screenshots, with demo music (development only). stage_bench: 25 s of the stage with demo music and GPU timers (development only)
 
 static Color rgba(unsigned rgb, double alpha = 1) {
     return Color{static_cast<uint8_t>(std::clamp(alpha, 0.0, 1.0) * 255 + .5), static_cast<uint8_t>(rgb >> 16), static_cast<uint8_t>(rgb >> 8), static_cast<uint8_t>(rgb)};
@@ -324,7 +324,11 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             bar.ButtonHoverBackgroundColor(rgba(0xFFFFFF, .1));
             if (render_review) {
                 set_review_state();
-                window.AppWindow().MoveAndResize({-20000, -20000, initial_width, initial_height});
+                // Screenshots for the README need the whole page at the screen's scale and the handle
+                // to capture it with; other review exports keep their 1:1 offscreen window.
+                check_hresult(window.as<IWindowNative>()->get_WindowHandle(&main_hwnd));
+                const double shot_scale = readme_shots ? GetDpiForWindow(main_hwnd) / 96.0 : 1.0;
+                window.AppWindow().MoveAndResize({-20000, -20000, static_cast<int>(initial_width * shot_scale), static_cast<int>(initial_height * shot_scale)});
                 root.Width(initial_width);
                 root.Height(initial_height);
                 RectangleGeometry frame;
@@ -819,7 +823,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // Find your EQ hides Clear Bass: the graph then takes the column's space back.
     void bass_column(bool shown) {
         get<FrameworkElement>(L"CurveArea").Margin(ThicknessHelper::FromLengths(shown ? 104 : 28, 16, 28, 0));
-        get<FrameworkElement>(L"BandValues").Margin(ThicknessHelper::FromLengths(shown ? 148 : 72, 10, 48, 0));
+        get<FrameworkElement>(L"BandValues").Margin(ThicknessHelper::FromLengths(shown ? 148 : 72, 10, 48, 22)); // the labels keep clear of the window's bottom edge
     }
     void layout_bass() {
         auto track = get<FrameworkElement>(L"BassTrack"); const double h = track.ActualHeight(); if (h < 40) return;
@@ -2451,6 +2455,17 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         phase=it->phase;pulse=it->pulse;apply_light();
         apply_field(seconds);
     }
+    // Development (--readme-shots): the window's client area as Windows composes it, swap chains included.
+    void capture_window(fs::path const& file){
+        RECT r{};GetClientRect(main_hwnd,&r);const int w=r.right-r.left,h=r.bottom-r.top;if(w<=0||h<=0)return;
+        HDC screen=GetDC(nullptr);HDC memory=CreateCompatibleDC(screen);
+        BITMAPINFO info{};info.bmiHeader={sizeof(BITMAPINFOHEADER),w,-h,1,32,BI_RGB};void* bits{};
+        HBITMAP bitmap=CreateDIBSection(screen,&info,DIB_RGB_COLORS,&bits,nullptr,0);auto previous=SelectObject(memory,bitmap);
+        PrintWindow(main_hwnd,memory,PW_CLIENTONLY|0x2/*PW_RENDERFULLCONTENT*/);GdiFlush();
+        BITMAPFILEHEADER header{};header.bfType=0x4D42;header.bfOffBits=sizeof(header)+sizeof(BITMAPINFOHEADER);header.bfSize=header.bfOffBits+w*h*4;
+        std::ofstream out(file,std::ios::binary);out.write(reinterpret_cast<const char*>(&header),sizeof(header));out.write(reinterpret_cast<const char*>(&info.bmiHeader),sizeof(BITMAPINFOHEADER));out.write(static_cast<const char*>(bits),static_cast<std::streamsize>(w)*h*4);
+        SelectObject(memory,previous);DeleteObject(bitmap);DeleteDC(memory);ReleaseDC(nullptr,screen);
+    }
     Windows::Foundation::IAsyncAction capture_review(fs::path const& file,std::ofstream* samples=nullptr,double seconds=0){
         Imaging::RenderTargetBitmap bitmap;
         co_await bitmap.RenderAsync(root,initial_width,initial_height);
@@ -2534,6 +2549,27 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             std::wstring view = review_view;
             std::transform(view.begin(), view.end(), view.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
             const auto filename = view + L"-" + std::to_wstring(initial_width) + L"x" + std::to_wstring(initial_height);
+            if(readme_shots){
+                // The README's screenshots: the window as Windows shows it (PrintWindow with the full
+                // composition, so the swap chains are in it), with demo music and sample batteries.
+                set_battery(L"BatteryLeft",82,true);set_battery(L"BatteryRight",79,true);set_battery(L"BatteryCase",61,true);set_controls_live(true,false);
+                animations=true;demo_music=true;glow_level=1;last_tick=precise_ms();
+                navigate(L"Main");set_noise(dusk::Noise::Ambient);
+                for(int i=0;i<150;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-main.bmp");
+                open_drawer();for(int i=0;i<70;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-library.bmp");
+                close_drawer();for(int i=0;i<40;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                open_editor();{auto curve=model.current().saved;curve[0]=3;curve[2]=-2;curve[3]=4;curve[5]=4;commit_curve(curve);after_change();}
+                for(int i=0;i<120;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-editor.bmp");
+                start_compare();for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-compare.bmp");end_compare();
+                navigate(L"Settings");root.UpdateLayout();layout_settings();
+                for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-settings.bmp");
+                animations=false;demo_music=false;navigate(L"Main");
+            }
             if(stage_bench){
                 animations=true;demo_music=true;glow_level=1;navigate(L"Main");set_noise(dusk::Noise::Ambient);last_tick=precise_ms();
                 const auto until=GetTickCount64()+25000;
@@ -2656,6 +2692,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command, int) {
     review_time=std::stod(option(L"--audio-time=",L"30"));
     review_wave_motion=args.find(L"--wave-motion-review")!=std::wstring::npos;
     stage_bench=args.find(L"--stage-bench")!=std::wstring::npos;
+    readme_shots=args.find(L"--readme-shots")!=std::wstring::npos;
+    if(readme_shots){initial_width=1200;initial_height=760;}
     review_sequence=args.find(L"--sequence")!=std::wstring::npos;
     review_motion=args.find(L"--motion-review")!=std::wstring::npos;
     if((!review_timeline.empty()||review_sequence||review_motion)&&!render_review)return 2;

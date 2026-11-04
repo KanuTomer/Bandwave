@@ -200,10 +200,10 @@
     <Grid x:Name="BandGrid" Margin="44,12,20,12"/>
     <Canvas x:Name="CurveCanvas" Margin="12" IsHitTestVisible="False"/>
    </Grid>
-   <Grid x:Name="BandValues" Grid.Row="2" Margin="148,10,48,0"/>
+   <Grid x:Name="BandValues" Grid.Row="2" Margin="148,10,48,22"/>
    <!-- Clear Bass (0.5.18): Sony's bass processing, not a sixth EQ point, so it is its own glowing
         column beside the graph, at the bass end. Drag it up or down; the glow grows from 0. -->
-   <Grid x:Name="BassRow" Grid.Row="1" Grid.RowSpan="2" Width="64" HorizontalAlignment="Left" Margin="28,16,0,0">
+   <Grid x:Name="BassRow" Grid.Row="1" Grid.RowSpan="2" Width="64" HorizontalAlignment="Left" Margin="28,16,0,22">
     <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Border Background="#05FFFFFF" BorderBrush="#12FFFFFF" BorderThickness="1" CornerRadius="8"/>
     <Grid x:Name="BassTrack" Margin="0,12">
