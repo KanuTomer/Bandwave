@@ -55,6 +55,10 @@ struct EditorChain {
         if(auto chain2=chain.try_as<IDXGISwapChain2>()){DXGI_MATRIX_3X2_F inverse{1/sx,0,0,1/sy,0,0};chain2->SetMatrixTransform(&inverse);}
         if(!back_view){winrt::com_ptr<ID3D11Texture2D> buffer;winrt::check_hresult(chain->GetBuffer(0,__uuidof(ID3D11Texture2D),buffer.put_void()));winrt::check_hresult(d3d->CreateRenderTargetView(buffer.get(),nullptr,back_view.put()));}
         const float background[4]{kBackground,kBackground,kBackground,1};lines.d3dc->ClearRenderTargetView(back_view.get(),background);
+        // 0. The +10, 0 and -10 guides (XAML lines until 0.7.1): drawn here so they fade out at the
+        //    sides like everything else; the 0 line under a flat curve showed as a hard-ended stub.
+        for(auto [y,a]:{std::pair{scene.top_y,.07f},std::pair{scene.zero_y,.16f},std::pair{scene.floor_y,.07f}})
+            lines.add_line({{scene.left,y},{scene.right,y}},0,0,sx,.5f*sx,a,a,a,a,1);
         // 1. The spectrum: a soft area rising from the floor, and a soft line along its top.
         if(scene.glow>0){
             std::vector<dusk::WavePoint> knots,top;std::vector<float> floor;
@@ -62,7 +66,10 @@ struct EditorChain {
             const auto level_y=[&](float level){return scene.floor_y-std::clamp(level,0.f,1.f)*span*.6f;};
             for(size_t i=0;i<dusk::kFine;++i)if(scene.spectrum_x[i]>=scene.left&&scene.spectrum_x[i]<=scene.right)knots.push_back({scene.spectrum_x[i],level_y(scene.spectrum[i])});
             if(knots.size()<2)knots={{scene.left,scene.floor_y},{scene.right,scene.floor_y}};
-            knots.insert(knots.begin(),{scene.left,knots.front().y});
+            // To the left edge along the first two bands' slope: repeating the first level made a flat
+            // stub that the smoothing folded into a crease.
+            {const auto a=knots[0],b=knots[1];const float slope=.5f*(b.y-a.y)/std::max(1e-3f,b.x-a.x); // half: the full slope shot up into the corner
+             knots.insert(knots.begin(),{scene.left,std::clamp(a.y-slope*(a.x-scene.left),scene.top_y,scene.floor_y)});}
             // A smooth outline through the bands (Catmull-Rom, eight steps a band): straight segments
             // looked jagged, and their wide quads showed faint stripes in the gradient.
             for(size_t k=0;k+1<knots.size();++k){
@@ -93,9 +100,14 @@ struct EditorChain {
             lines.add_line(scene.curve,0,0,sx,1*sx,c.r*wide,c.g*wide,c.b*wide,wide,22*sx);
             lines.add_line(scene.curve,0,0,sx,1*sx,c.r*tight,c.g*tight,c.b*tight,tight,6*sx);
         }
+        // 3b. The curve itself, crisp, 1.5 DIPs wide (it was a XAML stroke until 0.7.1). Drawn here so
+        //     the side fade in flush() treats both of its ends exactly like the fill and glow under it.
+        if(scene.curve.size()>1)lines.add_line(scene.curve,0,0,sx,.75f*sx,.949f,.949f,.949f,1,1);
         // 4. Compare: how the EQ was, as a dashed afterimage.
         if(scene.ghost.size()>1&&scene.ghost_alpha>0){const float a=.6f*scene.ghost_alpha;lines.add_dots(scene.ghost,sx,.8f*sx,.95f*a,.95f*a,.95f*a,a,12,7);}
-        lines.flush(back_view.get(),static_cast<float>(pixel_width),static_cast<float>(pixel_height));
+        // Everything fades out over the last 24 DIPs at the plot's left and right, so nothing stops
+        // at a hard edge: the analyser, the curve's fill and its glow.
+        lines.flush(back_view.get(),static_cast<float>(pixel_width),static_cast<float>(pixel_height),0,0,scene.left*sx,scene.right*sx,24*sx);
         lines.dither(back_view.get(),static_cast<float>(pixel_width),static_cast<float>(pixel_height));
         if(!capture.empty()){save_chain_capture(chain.get(),d3d.get(),lines.d3dc.get(),capture);capture.clear();}
         winrt::check_hresult(chain->Present(1,0));

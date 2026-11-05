@@ -16,3 +16,4 @@
 .env
 .env.*
 
+/DESIGN_PHILOSOPHY.md
