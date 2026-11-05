@@ -84,7 +84,9 @@ static bool render_review = false, demo_music = false, log_audio = false, profil
 struct CostSample{const char* name;double ms;};
 static std::vector<CostSample> costs;
 struct CostScope{const char* name;std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now();~CostScope(){if(profile_motion&&costs.size()<200000)costs.push_back({name,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()});}};
-static std::wstring review_view = L"Main", review_pass = L"pass1";static int initial_width = 1280, initial_height = 800;
+static std::wstring review_view = L"Main", review_pass = L"pass1";
+static bool review_silent = false; // render-review only: no music, to show Find your EQ paused
+static int initial_width = 1280, initial_height = 800;
 static fs::path review_timeline;
 static double review_time = 30;
 static bool review_sequence = false, review_motion = false, review_wave_motion=false, stage_bench=false, readme_shots=false; // readme_shots: the README's screenshots, with demo music (development only). stage_bench: 25 s of the stage with demo music and GPU timers (development only)
@@ -203,6 +205,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     dusk::WaveFrame wave_frame;uint64_t line_sequence=0;
     bool closing=false;
     double glow_level=0;bool music_playing=false;
+    bool guide_paused=false;double guide_silence_ms=0; // Find your EQ waits for music (0.7.4)
     std::optional<dusk::Guide> guide;
     // ---------- The owner (EarbudControls.exe): the only process talking to the earbuds ----------
     std::unique_ptr<earbud::OwnerLink> link;
@@ -580,7 +583,14 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 levels[i] = static_cast<float>(std::clamp(.5 + .32 * std::sin(now * (.7 + i * .37) + i * 1.3) + .18 * std::pow(std::max(0.0, std::sin(now * 2.7 + i)), 3), 0.0, 1.0));
             playing = true;
         }
-        music_playing = playing || render_review;
+        music_playing = playing || (render_review && !review_silent);
+        // Find your EQ is chosen by ear: once the music has been quiet a little longer than
+        // spectrum's 1.5 s hold (so a gap between tracks doesn't flicker it), the guide pauses,
+        // and it carries on as soon as music plays again.
+        if (guide) {
+            guide_silence_ms = music_playing ? 0 : guide_silence_ms + interval;
+            if (const bool paused = guide_silence_ms >= 1000; paused != guide_paused) { guide_paused = paused; apply_guide_pause(); }
+        }
         // The editor's analyser: 48 bands, quick to rise and slow to fall, like a level meter.
         auto fine = spectrum.fine();
         if (demo_music) for (size_t i = 0; i < dusk::kFine; ++i) {
@@ -2033,6 +2043,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         draw_curve();
     }
     void start_guide_from_home() {
+        if (!music_playing) return; // the menu item is disabled then; this is the backstop
         if (drawer_open) close_drawer();
         open_editor(); guide_from_home = true; enter_guide();
     }
@@ -2091,7 +2102,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void sync_guide(int direction) {
         auto const& g = *guide; const bool review = g.reviewing();
         static constexpr const wchar_t* steps[] = {L"Pick a sound", L"A closer match", L"Your EQ"}; // the dots already say which step
-        get<TextBlock>(L"GuideStep").Text(steps[g.stage]); // no instructions: the owner finds them out of keeping
+        get<TextBlock>(L"GuideStep").Text(guide_paused ? L"Paused · no music playing" : steps[g.stage]); // no instructions: the owner finds them out of keeping
         for (int slot = 0; slot < 5; ++slot) {
             const auto suffix = std::to_wstring(slot);
             std::wstring label = review ? (slot ? L"Before" : L"After")
@@ -2105,6 +2116,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         }
         show(L"GuideRetryButton", review);
         get<Button>(L"GuideNextButton").Content(box_value(review ? L"Keep" : L"Next"));
+        get<Button>(L"GuideNextButton").IsEnabled(!guide_paused);
+        for (int slot = 0; slot < 5; ++slot) get<Control>(guide_name(slot).c_str()).IsTabStop(!guide_paused);
         get<Button>(L"GuideBackButton").IsEnabled(g.stage > 0);
         for (size_t i = 0; i < guide_dots.size(); ++i) {
             const bool current = static_cast<int>(i) == g.stage;
@@ -2138,6 +2151,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     }
     void enter_guide() {
         guide = dusk::Guide{};
+        guide_paused = false; guide_silence_ms = 0;
+        get<UIElement>(L"GuideChoiceHost").IsHitTestVisible(true); fade(get<UIElement>(L"GuideChoiceHost"), 1, 0);
         end_compare();
         show(L"EqHeader", false); bass_interactive(false);
         show(L"GuideHeader", true); show(L"GuidePanel", true);
@@ -2147,8 +2162,20 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         sync_guide(0);
         get<Control>(L"GuideOption0").Focus(FocusState::Programmatic);
     }
-    void choose_guide(int slot) {
+    // Paused: the choices dim like disconnected controls and stop responding, Next and Keep are off,
+    // and the title says why. Cancel, Back and Start again still work; picks are kept.
+    void apply_guide_pause() {
         if (!guide) return;
+        auto host = get<UIElement>(L"GuideChoiceHost");
+        host.IsHitTestVisible(!guide_paused); fade(host, guide_paused ? .4f : 1.f, 200);
+        get<TextBlock>(L"GuideStep").Text(guide_paused ? std::wstring(L"Paused · no music playing")
+            : std::wstring(guide->stage == 0 ? L"Pick a sound" : guide->stage == 1 ? L"A closer match" : L"Your EQ"));
+        get<Button>(L"GuideNextButton").IsEnabled(!guide_paused);
+        for (int slot = 0; slot < 5; ++slot) get<Control>(guide_name(slot).c_str()).IsTabStop(!guide_paused);
+        if (guide_paused && get<Control>(L"GuideNextButton").FocusState() != FocusState::Unfocused) get<Control>(L"GuideBackButton").Focus(FocusState::Programmatic);
+    }
+    void choose_guide(int slot) {
+        if (!guide || guide_paused) return;
         if (guide->reviewing()) guide->before = slot == 1; else guide->choose(guide_option(guide->stage, slot));
         sync_guide(0);
     }
@@ -2172,7 +2199,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void bind() {
         for (int slot = 0; slot < 5; ++slot) get<ToggleButton>(guide_name(slot).c_str()).Click([this, slot](auto&&, auto&&) { choose_guide(slot); });
         get<HyperlinkButton>(L"GuideRetryButton").Click([this](auto&&, auto&&) { if (guide) { guide->retry(); sync_guide(-1); get<Control>(L"GuideOption0").Focus(FocusState::Programmatic); } });
-        click(L"GuideNextButton", [this] { if (!guide) return; if (guide->reviewing()) finish_guide(true); else { guide->next(); sync_guide(1); } });
+        click(L"GuideNextButton", [this] { if (!guide || guide_paused) return; if (guide->reviewing()) finish_guide(true); else { guide->next(); sync_guide(1); } });
         click(L"GuideBackButton", [this] { if (guide && guide->back()) sync_guide(-1); });
         click(L"GuideCancelButton", [this] { finish_guide(false); });
         click(L"EditorNewButton",[this]{model.create();rebuild_banks();open_editor();});
@@ -2189,6 +2216,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         get<MenuFlyoutItem>(L"NewCopyAction").Click([this](auto&&, auto&&) { if (!model.current().curve_known) return; model.duplicate(); rebuild_banks(); close_drawer(); open_editor(); retarget(); });
         get<Button>(L"NewButton").Flyout().Opening([this](auto&&, auto&&) {
             auto copy = get<MenuFlyoutItem>(L"NewCopyAction"); copy.IsEnabled(model.current().curve_known); copy.Text(L"Copy of " + model.current().name);
+            // Find your EQ is chosen by ear, so like Sony's it needs music playing (owner, 5 Nov 2026).
+            auto find = get<MenuFlyoutItem>(L"NewGuideAction"); find.IsEnabled(music_playing);
+            find.Text(music_playing ? L"Find your EQ (listen and pick)" : L"Find your EQ (play music first)");
         });
         get<TextBox>(L"LibrarySearch").TextChanged([this](auto&&, auto&&) { if (drawer_open) rebuild_library(); });
         root.KeyDown([this](auto&&, Input::KeyRoutedEventArgs const& args) {
@@ -2493,6 +2523,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             if(review_view==L"GuideReview")guide->next();
             sync_guide(0);}
         // The 0.7.1 bug: New > Find your EQ, Cancel, then open an EQ. It must open editable.
+        // Music stops during the guide: paused, choices dimmed and locked (review_silent is set for it).
+        if (review_view == L"GuidePaused") { open_editor(); enter_guide(); guide->choose(2); sync_guide(0); guide_silence_ms = 1000; guide_paused = true; apply_guide_pause(); }
         if (review_view == L"GuideCancelled") { start_guide_from_home(); finish_guide(false); model.select(1); open_editor(); }
         if (review_view == L"Settings") navigate(L"Settings");
         blend = 1;
@@ -2665,7 +2697,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 std::ofstream summary(folder/L"costs.csv");summary<<"operation,milliseconds\n";for(auto const& sample:costs)summary<<sample.name<<','<<sample.ms<<'\n';
                 animations=false;demo_music=false;timer.Stop();model.editing=false;drawer_open=false;drawer_t=0;show(L"Drawer",false);navigate(L"Main");
             }
-            {std::ofstream state(folder/(filename+L"-state.csv"));state<<"page,glow_visible,all_label,eq_all_label,editable\n"<<to_string(page)<<','<<(glow_level>0)<<','<<to_string(get<TextBlock>(L"AllLabel").Text())<<','<<to_string(get<TextBlock>(L"EqAllLabel").Text())<<','<<(page==L"Eq"?(editor_editable()?"yes":"no"):"-")<<'\n';}
+            {std::ofstream state(folder/(filename+L"-state.csv"));state<<"page,glow_visible,all_label,eq_all_label,editable,guide_paused\n"<<to_string(page)<<','<<(glow_level>0)<<','<<to_string(get<TextBlock>(L"AllLabel").Text())<<','<<to_string(get<TextBlock>(L"EqAllLabel").Text())<<','<<(page==L"Eq"?(editor_editable()?"yes":"no"):"-")<<','<<(guide?(guide_paused&&!get<Button>(L"GuideNextButton").IsEnabled()&&!get<UIElement>(L"GuideChoiceHost").IsHitTestVisible()?"yes":"no"):"-")<<'\n';}
             auto audio=read_timeline();
             export_layout(folder/(filename+L"-layout.csv"));
             std::ofstream samples(folder/(filename+L"-pixels.csv"));samples<<"seconds,phase,rgb,pixel_r,pixel_g,pixel_b,line_sequence,glow_sequence,surface_allocations\n";
@@ -2754,6 +2786,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command, int) {
         return args.substr(pos, args.find(L' ', pos) - pos);
     };
     review_view = option(L"--view=", L"Main");
+    review_silent = review_view == L"GuidePaused";
     review_pass = option(L"--pass=", L"pass1");    review_timeline=option(L"--audio-timeline=",L"");
     review_time=std::stod(option(L"--audio-time=",L"30"));
     review_wave_motion=args.find(L"--wave-motion-review")!=std::wstring::npos;

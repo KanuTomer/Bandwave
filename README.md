@@ -53,7 +53,7 @@ without reaching for your phone.
 1. Turn on **Developer Mode** in Windows Settings > System > For developers. Windows only shows
    widgets from apps outside the Microsoft Store when it's on.
 2. Pair your WF-C710N in Windows Bluetooth settings.
-3. Download **EarbudControls-Setup-0.7.2.exe** from
+3. Download **EarbudControls-Setup-0.7.4.exe** from
    [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
    app and the widget together.
 4. Open **Sound Connect** from Start. To add the widget, open Win + W, choose Add widgets, then
