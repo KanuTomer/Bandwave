@@ -17,7 +17,8 @@ without reaching for your phone.
 - **Switch sound modes instantly:** Noise cancelling, Ambient or Off.
 - **Keep an EQ library:** Sony's presets, with their real curves read from your earbuds, plus
   as many of your own EQs as you like. Six sit on the main screen, one tap away. The library
-  opens over the main screen as frosted glass, with the music still moving behind it.
+  opens over the main screen as frosted glass, with the music still moving behind it. Sony's
+  presets are marked as such; changing one makes your own copy and leaves the preset as it is.
 - **Edit by eye and by ear:** five bands from 400 Hz to 16 kHz, as in Sony's app. A live analyser
   behind the curve shows what's playing on the same scale, so you can see what each band
   touches. Changes play on your earbuds as you make them; undo any step.
@@ -25,8 +26,10 @@ without reaching for your phone.
   old one shows as a dashed line.
 - **Clear Bass on its own:** Sony's bass processing isn't an EQ band, so it has its own glowing
   column beside the graph.
-- **Find your EQ by ear:** three quick A/B rounds (low end, vocals, upper range) build an EQ
-  from what you hear, not from numbers.
+- **Find your EQ by ear, the way Sony's app does:** pick the one you like from five sounds, then
+  from your pick and four variations of it, then hear the result against what you had. It uses
+  Sony's own sounds, so it lands where Sony's app would. Each one plays on your earbuds the moment
+  you choose it, and the one you've chosen glows in the music's colour.
 - **Take two EQs with you:** keep any EQ in the earbuds' Custom 1 and Custom 2 slots, for your
   phone and other devices. What's already in those slots is imported the first time you connect.
 - **Change your earbuds' settings:** Bluetooth priority, DSEE, ambient level, voice focus, voice
@@ -41,6 +44,8 @@ without reaching for your phone.
 |---|---|---|
 | ![The EQ library open as frosted glass over the moving sound lines: two EQs on the earbuds, six on the main screen, and everything else](docs/images/library.png) | ![The EQ editor with music playing: the curve filled with a soft glow, a live analyser behind it, and the Clear Bass column on the left](docs/images/editor.png) | ![Hold to compare: the edited curve, with how it was shown as a dashed line](docs/images/compare.png) |
 
+![Find your EQ with music playing: the curve of the chosen sound above five numbered choices, the third glowing in the music's colour, and Clear Bass at +6](docs/images/guide.png)
+
 ![Settings around a picture of the earbuds: sound, voice and sounds (with connecting to two devices and hearing your voice on calls), wearing and power, and touch controls](docs/images/settings.png)
 
 ## Install
@@ -48,7 +53,7 @@ without reaching for your phone.
 1. Turn on **Developer Mode** in Windows Settings > System > For developers. Windows only shows
    widgets from apps outside the Microsoft Store when it's on.
 2. Pair your WF-C710N in Windows Bluetooth settings.
-3. Download **EarbudControls-Setup-0.6.3.exe** from
+3. Download **EarbudControls-Setup-0.7.4.exe** from
    [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
    app and the widget together.
 4. Open **Sound Connect** from Start. To add the widget, open Win + W, choose Add widgets, then

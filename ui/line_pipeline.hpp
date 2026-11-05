@@ -35,14 +35,14 @@ struct LinePipeline {
     void create(ID3D11Device* device){
         d3d=nullptr;d3d.copy_from(device);
         static constexpr char source[]=
-            "cbuffer Target:register(b0){float2 size;float fade;float unused;};\n"
+            "cbuffer Target:register(b0){float2 size;float fade;float unused;float left;float right;float side;float pad;};\n"
             "struct In{float2 p:POSITION;float across:ACROSS;float half:HALF;float soft:SOFT;float4 c:COLOR;};\n"
             "struct Out{float4 p:SV_Position;float across:ACROSS;float half:HALF;float soft:SOFT;float4 c:COLOR;};\n"
             "Out vs(In v){Out o;o.p=float4(v.p.x/size.x*2-1,1-v.p.y/size.y*2,0,1);o.across=v.across;o.half=v.half;o.soft=v.soft;o.c=v.c;return o;}\n"
             // Coverage ramps over the soft width around the edge: one pixel for a crisp line, wider for
             // an out-of-focus one. Near the top and bottom of the target everything fades out.
             "float4 ps(Out i):SV_Target{float cover=saturate((i.half+i.soft*.5-abs(i.across))/i.soft);"
-            "float bottom=unused>0?unused:size.y;float edge=fade>0?saturate(i.p.y/fade)*saturate((bottom-i.p.y)/fade):1;return i.c*cover*edge;}\n"
+            "float bottom=unused>0?unused:size.y;float edge=fade>0?saturate(i.p.y/fade)*saturate((bottom-i.p.y)/fade):1;float inside=side>0?saturate((i.p.x-left)/side)*saturate((right-i.p.x)/side):1;return i.c*cover*edge*inside;}\n"
             "float4 full(uint id:SV_VertexID):SV_Position{float2 uv=float2((id<<1)&2,id&2);return float4(uv*float2(2,-2)+float2(-1,1),0,1);}\n"
             "float noise(float2 p){p=frac(p*float2(443.897,441.423));p+=dot(p,p.yx+19.19);return frac((p.x+p.y)*p.x);}\n"
             "float4 grain(float4 p:SV_Position):SV_Target{float n=noise(p.xy+unused)*(1.5/255);return float4(n,n,n,0);}\n";
@@ -61,7 +61,7 @@ struct LinePipeline {
             {"HALF",0,DXGI_FORMAT_R32_FLOAT,0,12,D3D11_INPUT_PER_VERTEX_DATA,0},{"SOFT",0,DXGI_FORMAT_R32_FLOAT,0,16,D3D11_INPUT_PER_VERTEX_DATA,0},
             {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,20,D3D11_INPUT_PER_VERTEX_DATA,0}};
         winrt::check_hresult(d3d->CreateInputLayout(layout,5,vcode->GetBufferPointer(),vcode->GetBufferSize(),line_layout.put()));
-        D3D11_BUFFER_DESC constants{16,D3D11_USAGE_DYNAMIC,D3D11_BIND_CONSTANT_BUFFER,D3D11_CPU_ACCESS_WRITE,0,0};winrt::check_hresult(d3d->CreateBuffer(&constants,nullptr,line_constants.put()));
+        D3D11_BUFFER_DESC constants{32,D3D11_USAGE_DYNAMIC,D3D11_BIND_CONSTANT_BUFFER,D3D11_CPU_ACCESS_WRITE,0,0};winrt::check_hresult(d3d->CreateBuffer(&constants,nullptr,line_constants.put()));
         // Premultiplied source-over, the same blending the Polylines and Direct2D strokes had.
         D3D11_BLEND_DESC blend{};auto& rt=blend.RenderTarget[0];rt.BlendEnable=TRUE;rt.SrcBlend=rt.SrcBlendAlpha=D3D11_BLEND_ONE;rt.DestBlend=rt.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;
         rt.BlendOp=rt.BlendOpAlpha=D3D11_BLEND_OP_ADD;rt.RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;winrt::check_hresult(d3d->CreateBlendState(&blend,line_blend.put()));
@@ -87,12 +87,13 @@ struct LinePipeline {
         }
     }
     // fade: lines fade out over this many pixels at the top and at `bottom` (the target's bottom if 0).
-    void flush(ID3D11RenderTargetView* view,float width,float height,float fade=0,float bottom=0){
+    // side: everything also fades out over this many pixels inside `left` and `right` (off if 0).
+    void flush(ID3D11RenderTargetView* view,float width,float height,float fade=0,float bottom=0,float left=0,float right=0,float side=0){
         if(line_vertices.empty())return;
         const UINT count=static_cast<UINT>(line_vertices.size());
         if(count>line_capacity){line_capacity=count+count/2;line_buffer=nullptr;D3D11_BUFFER_DESC desc{static_cast<UINT>(line_capacity*sizeof(LineVertex)),D3D11_USAGE_DYNAMIC,D3D11_BIND_VERTEX_BUFFER,D3D11_CPU_ACCESS_WRITE,0,0};winrt::check_hresult(d3d->CreateBuffer(&desc,nullptr,line_buffer.put()));}
         D3D11_MAPPED_SUBRESOURCE mapped{};winrt::check_hresult(d3dc->Map(line_buffer.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));memcpy(mapped.pData,line_vertices.data(),count*sizeof(LineVertex));d3dc->Unmap(line_buffer.get(),0);
-        winrt::check_hresult(d3dc->Map(line_constants.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));const float size[4]{width,height,fade,bottom};memcpy(mapped.pData,size,sizeof(size));d3dc->Unmap(line_constants.get(),0);
+        winrt::check_hresult(d3dc->Map(line_constants.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));const float size[8]{width,height,fade,bottom,left,right,side,0};memcpy(mapped.pData,size,sizeof(size));d3dc->Unmap(line_constants.get(),0);
         // Direct2D shares this device and leaves its own state behind: set everything the draw uses.
         const UINT stride=sizeof(LineVertex),offset=0;ID3D11Buffer* buffers[]{line_buffer.get()};ID3D11Buffer* cbs[]{line_constants.get()};
         d3dc->IASetInputLayout(line_layout.get());d3dc->IASetVertexBuffers(0,1,buffers,&stride,&offset);d3dc->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -115,7 +116,7 @@ struct LinePipeline {
         const float factor[4]{};
         for(auto* state:{dither_add.get(),dither_take.get()}){
             dither_seed=std::fmod(dither_seed+37.31f,1000.f);
-            winrt::check_hresult(d3dc->Map(line_constants.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));const float values[4]{width,height,0,dither_seed};memcpy(mapped.pData,values,sizeof(values));d3dc->Unmap(line_constants.get(),0);
+            winrt::check_hresult(d3dc->Map(line_constants.get(),0,D3D11_MAP_WRITE_DISCARD,0,&mapped));const float values[8]{width,height,0,dither_seed,0,0,0,0};memcpy(mapped.pData,values,sizeof(values));d3dc->Unmap(line_constants.get(),0);
             d3dc->OMSetBlendState(state,factor,0xffffffff);d3dc->Draw(3,0);
         }
         ID3D11RenderTargetView* none[]{nullptr};d3dc->OMSetRenderTargets(1,none,nullptr);

@@ -123,7 +123,8 @@ int main() {
     {
         Model model;int factory=0;for(auto const& p:model.profiles)if(p.factory)++factory;CHECK(factory==9);
         model.select(model.profiles.size()-1);auto saved=model.current().saved;model.edit(0,8);model.save();CHECK(model.current().saved==saved);auto count=model.profiles.size();model.duplicate();CHECK(model.profiles.size()==count);
-        CHECK(guided_curve({1,1,1},1)==Curve{});CHECK(guided_curve({2,2,2},0)==Curve{});auto curve=guided_curve({0,2,2},1);CHECK(curve[0]==-4&&curve[2]==4&&curve[5]==0);
+        // Sony's candidates never move 400 Hz or 1 kHz, and option 1 is the EQ left as it is.
+        CHECK(kGuideFirst[0]==Curve{});for(auto const& set:kGuideSecond)for(auto const& c:set)CHECK(c[0]==0&&c[1]==0);
         {Model m;m.select(0);CHECK(m.current().factory);auto total=m.profiles.size();m.set_live({2,0,0,0,0,0});
          CHECK(m.profiles.size()==total+1&&m.current().name==L"Off (mine)"&&!m.current().factory&&m.current().saved[0]==2&&m.profiles[0].saved==Curve{});
          m.set_live({3,0,0,0,0,0});CHECK(m.profiles.size()==total+1&&m.current().saved==m.current().draft);
@@ -131,8 +132,12 @@ int main() {
         {Model m;CHECK(m.kept_slot(7)==0&&m.kept[1]==0);CHECK(!m.keep(1,0));CHECK(!m.keep(1,m.profiles.size()-1));
          CHECK(m.keep(1,7)&&m.kept_slot(7)==1&&m.kept[0]==0);m.keep(0,2);m.move(2,9);CHECK(m.kept_slot(9)==0);
          m.select(9);m.erase();CHECK(m.kept[0]==0);m.create();CHECK(m.find(m.current().id)==m.selected);m.duplicate();CHECK(m.current().id!=m.profiles[m.selected-1].id);}
-        {Guide guide;CHECK(!guide.can_advance());guide.next();CHECK(guide.stage==0);guide.choose(0);guide.next();guide.choose(2);guide.next();CHECK(guide.back()&&guide.stage==1);guide.next();guide.choose(1);guide.next();
-         CHECK(guide.reviewing()&&(guide.choices==std::array<int,3>{0,2,1}));guide.strength=1;CHECK(guide.curve()==guided_curve({0,2,1},1));guide.strength=0;CHECK(guide.curve()==Curve{});}
+        {Guide guide;CHECK(guide.curve()==Curve{});CHECK(!guide.back());
+         guide.choose(2);CHECK((guide.curve()==Curve{0,0,1,2,3,6}));guide.next();CHECK(guide.stage==1&&guide.curve()==kGuideFirst[2]);
+         guide.choose(4);CHECK((guide.curve()==Curve{0,0,0,1,2,3})); // Sony's 3 then 9: Clear Bass +3, 6.3k +1, 16k +2
+         guide.next();CHECK(guide.reviewing()&&guide.curve()==kGuideSecond[2][3]);guide.next();CHECK(guide.stage==2);
+         CHECK(guide.back()&&guide.stage==1&&guide.second==4);guide.back();guide.choose(1);CHECK(guide.second==0&&guide.curve()==kGuideFirst[1]);
+         guide.next();guide.next();guide.before=true;guide.retry();CHECK(guide.stage==0&&guide.first==0&&!guide.before&&guide.curve()==Curve{});}
         ReactiveState low,high;std::array<float,7> bass{},treble{};bass[0]=.8f;treble[5]=.8f;
         for(int i=0;i<900;++i){low.step(bass,1.0/30);high.step(treble,1.0/30);}CHECK(std::abs(low.phase-high.phase)>.2);
         auto held=high.phase;for(int i=0;i<300;++i)high.step(treble,1.0/30);CHECK(std::abs(high.phase-held)<.02);

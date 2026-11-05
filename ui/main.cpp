@@ -85,6 +85,7 @@ struct CostSample{const char* name;double ms;};
 static std::vector<CostSample> costs;
 struct CostScope{const char* name;std::chrono::steady_clock::time_point start=std::chrono::steady_clock::now();~CostScope(){if(profile_motion&&costs.size()<200000)costs.push_back({name,std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()});}};
 static std::wstring review_view = L"Main", review_pass = L"pass1";
+static bool review_silent = false; // render-review only: no music, to show Find your EQ paused
 static int initial_width = 1280, initial_height = 800;
 static fs::path review_timeline;
 static double review_time = 30;
@@ -204,6 +205,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     dusk::WaveFrame wave_frame;uint64_t line_sequence=0;
     bool closing=false;
     double glow_level=0;bool music_playing=false;
+    bool guide_paused=false;double guide_silence_ms=0; // Find your EQ waits for music (0.7.4)
     std::optional<dusk::Guide> guide;
     // ---------- The owner (EarbudControls.exe): the only process talking to the earbuds ----------
     std::unique_ptr<earbud::OwnerLink> link;
@@ -285,6 +287,12 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             bank_pill.border = get<Border>(L"BankPill");
             eq_pill.border = get<Border>(L"EqPill");
             guide_pill.border = get<Border>(L"GuidePill");
+            {   // Find your EQ's selected tile glows like the Clear Bass column (owner, 5 Nov 2026):
+                // strongest at the bottom, in the music's colour, white and faint in silence.
+                guide_glow_brush = LinearGradientBrush(); guide_glow_brush.StartPoint({.5f, 1}); guide_glow_brush.EndPoint({.5f, 0});
+                for (auto [offset, alpha] : {std::pair{0.f, .22f}, std::pair{1.f, .06f}}) { GradientStop stop; stop.Offset(offset); stop.Color(Color{static_cast<uint8_t>(255 * alpha), 255, 255, 255}); guide_glow_brush.GradientStops().Append(stop); }
+                guide_pill.border.Background(guide_glow_brush);
+            }
             for (Pill* pill : {&noise_pill, &bank_pill, &eq_pill, &guide_pill}) pill->border.RenderTransform(pill->move);
             get<UIElement>(L"Drawer").RenderTransform(drawer_move);
             build_haze();
@@ -382,7 +390,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             // Fades and scaling can only be attached once the elements are live in a window.
             if (animations && !high_contrast) {
                 for (auto const& key : motion_keys) attach_key_motion(key);motion_keys.clear();
-                for (auto name : {L"NoiseCancelling",L"NoiseAmbient",L"NoiseOff",L"AllButton",L"CompareButton",L"EditorUndoButton",L"GuideA",L"GuideB"}) attach_key_motion(get<FrameworkElement>(name));
+                for (auto name : {L"NoiseCancelling",L"NoiseAmbient",L"NoiseOff",L"AllButton",L"CompareButton",L"EditorUndoButton",L"GuideOption0",L"GuideOption1",L"GuideOption2",L"GuideOption3",L"GuideOption4"}) attach_key_motion(get<FrameworkElement>(name));
                 for (auto const& dot : guide_dots) { ScalarTransition fade; fade.Duration(std::chrono::milliseconds(200)); Vector3Transition grow; grow.Duration(std::chrono::milliseconds(200)); dot.OpacityTransition(fade); dot.ScaleTransition(grow); }
 
             }
@@ -575,7 +583,14 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 levels[i] = static_cast<float>(std::clamp(.5 + .32 * std::sin(now * (.7 + i * .37) + i * 1.3) + .18 * std::pow(std::max(0.0, std::sin(now * 2.7 + i)), 3), 0.0, 1.0));
             playing = true;
         }
-        music_playing = playing || render_review;
+        music_playing = playing || (render_review && !review_silent);
+        // Find your EQ is chosen by ear: once the music has been quiet a little longer than
+        // spectrum's 1.5 s hold (so a gap between tracks doesn't flicker it), the guide pauses,
+        // and it carries on as soon as music plays again.
+        if (guide) {
+            guide_silence_ms = music_playing ? 0 : guide_silence_ms + interval;
+            if (const bool paused = guide_silence_ms >= 1000; paused != guide_paused) { guide_paused = paused; apply_guide_pause(); }
+        }
         // The editor's analyser: 48 bands, quick to rise and slow to fall, like a level meter.
         auto fine = spectrum.fine();
         if (demo_music) for (size_t i = 0; i < dusk::kFine; ++i) {
@@ -585,7 +600,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         }
         float fine_energy = 0;
         for (size_t i = 0; i < dusk::kFine; ++i) {
-            const double rate = std::min(1.0, interval / (fine[i] > fine_shown[i] ? 40.0 : 220.0));
+            // Slow enough for the eye to follow (owner, 5 Nov 2026; was 40 ms up, 220 ms down).
+            const double rate = std::min(1.0, interval / (fine[i] > fine_shown[i] ? 120.0 : 500.0));
             fine_shown[i] += static_cast<float>((fine[i] - fine_shown[i]) * rate); fine_energy += fine_shown[i];
         }
         const bool ghost_moving = ghost_t != (comparing ? 1.0 : 0.0);
@@ -803,23 +819,27 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             canvas.Children().Clear();eq_handles.clear();plot_width=w;plot_height=h;
         for (int gain : {-10, 0, 10}) {
             Shapes::Line rule; rule.X1(32); rule.X2(w - 8); rule.Y1(plot.y(gain)); rule.Y2(plot.y(gain));
-            rule.Stroke(brush(0xFFFFFF, gain == 0 ? .16 : .07)); canvas.Children().Append(rule);
+            rule.Stroke(brush(0xFFFFFF, gain == 0 ? .16 : .07)); rule.Opacity(high_contrast ? 1 : 0); canvas.Children().Append(rule); // the swap chain draws them otherwise
             TextBlock label; label.Text(gain > 0 ? L"+10" : gain == 0 ? L"0" : L"−10");
             label.FontSize(11); label.Foreground(brush(0xF2F2F2,.45));
             Canvas::SetLeft(label,0); Canvas::SetTop(label,std::clamp(plot.y(gain)-8,0.0,h-16)); canvas.Children().Append(label);
         }
 
-            eq_core=Shapes::Path();eq_core.Stroke(brush(0xF2F2F2));eq_core.StrokeThickness(1.5);canvas.Children().Append(eq_core);
+            // The editor's swap chain draws the visible curve (editor_chain.hpp), fading out evenly at
+            // both ends. This stroke shows only in high contrast, where the swap chain isn't drawn.
+            eq_core=Shapes::Path();eq_core.Stroke(brush(0xF2F2F2));eq_core.StrokeThickness(1.5);
+            eq_core.StrokeStartLineCap(PenLineCap::Round);eq_core.StrokeEndLineCap(PenLineCap::Round);
+            canvas.Children().Append(eq_core);
             for(int i=0;i<5;++i){Shapes::Ellipse handle;handle.Width(10);handle.Height(10);handle.Fill(brush(0x0A0A0A));handle.Stroke(brush(0xF2F2F2));handle.StrokeThickness(2);canvas.Children().Append(handle);eq_handles.push_back(handle);if(guide)fade(handle,0,0);}
         }
         auto points=curve_points(eq_shown,plot.width,plot.top(),plot.travel());for(auto& point:points)point.X+=32;
-        eq_core.Data(smooth(points));
+        eq_core.Data(smooth(points)); eq_core.Opacity(high_contrast ? 1 : 0);
         curve_cache=points;curve_glow_stale=true;apply_curve_glow();layout_bass();draw_editor();
         for(size_t i=0;i<5;++i){Canvas::SetLeft(eq_handles[i],points[i+1].X-5);Canvas::SetTop(eq_handles[i],points[i+1].Y-5);}
     }
     // The Clear Bass column: a zero line, a glow from 0 to the level, and a pill-shaped knob, on the
     // same scale as the bands. Its colour follows the music like the curve's fill.
-    LinearGradientBrush bass_glow_brush{nullptr};
+    LinearGradientBrush bass_glow_brush{nullptr}, guide_glow_brush{nullptr};
     // Find your EQ hides Clear Bass: the graph then takes the column's space back.
     void bass_column(bool shown) {
         get<FrameworkElement>(L"CurveArea").Margin(ThicknessHelper::FromLengths(shown ? 104 : 28, 16, 28, 0));
@@ -845,6 +865,10 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         auto stops = bass_glow_brush.GradientStops();
         auto strong = tint; strong.A = static_cast<uint8_t>(255 * (.22 + .3 * strength)); auto faint = tint; faint.A = static_cast<uint8_t>(255 * .04);
         stops.GetAt(0).Color(strong); stops.GetAt(1).Color(faint);
+        if (guide && guide_glow_brush) { // a little fainter at the top than the column, so the tile's number stays readable
+            auto top = tint; top.A = static_cast<uint8_t>(255 * (.06 + .04 * strength));
+            guide_glow_brush.GradientStops().GetAt(0).Color(strong); guide_glow_brush.GradientStops().GetAt(1).Color(top);
+        }
     }
     void draw_editor() {
         if (closing || high_contrast || page != L"Eq" || !root.XamlRoot()) return;
@@ -863,7 +887,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             const double f = std::sqrt(dusk::fine_edge(i) * dusk::fine_edge(i + 1));
             scene.spectrum_x[i] = static_cast<float>(32 + plot.width * (std::log(f / 400) / std::log(2.5) + .5) / 5) + ox;
         }
-        scene.spectrum = fine_shown;
+        // Each band blends a little with its neighbours, so single narrow spikes become swells.
+        for (size_t i = 0; i < dusk::kFine; ++i)
+            scene.spectrum[i] = .5f * fine_shown[i] + .25f * fine_shown[i ? i - 1 : i] + .25f * fine_shown[std::min(i + 1, dusk::kFine - 1)];
         if (eq_core && curve_cache.size() > 1) { scene.curve = sample_curve(curve_cache); for (auto& p : scene.curve) { p.x += ox; p.y += oy; } }
         if (ghost_t > 0 && model.current().curve_known) {
             std::array<double, 6> was{}; for (size_t i = 0; i < 6; ++i) was[i] = compare_curve[i];
@@ -964,6 +990,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         Viewbox fit;fit.Stretch(Stretch::Uniform);fit.HorizontalAlignment(HorizontalAlignment::Stretch);fit.Child(mini);content.Children().Append(fit);
         TextBlock name;name.Text(profile.name);name.FontSize(13);name.TextTrimming(TextTrimming::CharacterEllipsis);Grid::SetRow(name,1);content.Children().Append(name);tile.Content(content);
         if(!editor&&model.kept_slot(i)>=0)content.Children().Append(earbud_badge(model.kept_slot(i)));
+        if(profile.factory)content.Children().Append(tile_caption(L"Sony preset"));
         if(!editor){
             // The chosen EQ shows a pencil: selecting it again opens the editor.
             FontIcon pencil;pencil.Glyph(L"\xE70F");pencil.FontSize(12);pencil.Opacity(.75);pencil.HorizontalAlignment(HorizontalAlignment::Right);pencil.VerticalAlignment(VerticalAlignment::Top);
@@ -1060,7 +1087,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             commit_curve(curve); after_change();
         });
         try { for (auto name : {L"GuideNextButton"}) get<Button>(name).Style(Application::Current().Resources().Lookup(box_value(L"AccentButtonStyle")).as<Style>()); } catch (hresult_error const&) {}
-        for (int i = 0; i < dusk::Guide::kRounds; ++i) {
+        for (int i = 0; i < dusk::Guide::kSteps; ++i) {
             Border dot; dot.Width(18); dot.Height(6); dot.CornerRadius(CornerRadiusHelper::FromUniformRadius(3)); dot.Background(brush(0xF2F2F2));
             dot.CenterPoint({9, 3, 0});
             get<StackPanel>(L"GuideDots").Children().Append(dot); guide_dots.push_back(dot);
@@ -1162,7 +1189,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     }
     void leave_editor() {
         end_compare();
-        if (guide) { guide.reset(); show(L"GuideHeader", false); show(L"GuidePanel", false); for (auto name : {L"EqHeader", L"BassRow"}) show(name, true); bass_column(true); }
+        if (guide) { guide.reset(); guide_from_home = false; restore_editor(false); }
         model.editing = false; note(L""); rebuild_banks(); navigate(L"Main"); retarget();
     }
 
@@ -1675,8 +1702,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         label_row.Height(GridLengthHelper::Auto());
         content.RowDefinitions().Append(label_row);
         if(profile.curve_known){Viewbox fit;fit.Stretch(Stretch::Uniform);fit.Child(mini_curve(profile.saved,.85));content.Children().Append(fit);}
-        else {TextBlock marker;marker.Text(L"Factory preset");marker.FontSize(11);marker.Opacity(.6);content.Children().Append(marker);}
+        else {TextBlock marker;marker.Text(L"Sony preset");marker.FontSize(11);marker.Opacity(.6);content.Children().Append(marker);}
         if(const int slot=model.kept_slot(index);slot>=0)content.Children().Append(earbud_badge(slot));
+        if(profile.factory&&profile.curve_known)content.Children().Append(tile_caption(L"Sony preset")); // an unknown curve's marker already says it
         TextBlock name;
         name.Text(profile.name);
         name.FontSize(13);
@@ -1803,8 +1831,11 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         }
         canvas.Height(height);
     }
-    TextBlock earbud_badge(int slot) {
-        TextBlock badge; badge.Text(L"On earbuds · Custom " + std::to_wstring(slot + 1)); badge.FontSize(10); badge.Opacity(.7);
+    TextBlock earbud_badge(int slot) { return tile_caption(L"On earbuds · Custom " + std::to_wstring(slot + 1)); }
+    // Sony presets are marked wherever they appear, so it's clear before opening one that editing
+    // makes your own copy (owner, 5 Nov 2026). Same place and style as the earbud slot caption.
+    static TextBlock tile_caption(std::wstring const& text) {
+        TextBlock badge; badge.Text(text); badge.FontSize(10); badge.Opacity(.7);
         badge.HorizontalAlignment(HorizontalAlignment::Left); badge.VerticalAlignment(VerticalAlignment::Top);
         return badge;
     }
@@ -2006,11 +2037,13 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void open_editor() {
         model.editing = true; opened = model; history.clear(); last_kind = -1; comparing = false;
         compare_curve = model.current().saved;
+        if (!guide) restore_editor(false); // whatever happened before, the editor opens editable
         sync_eq();
         navigate(L"Eq");
         draw_curve();
     }
     void start_guide_from_home() {
+        if (!music_playing) return; // the menu item is disabled then; this is the backstop
         if (drawer_open) close_drawer();
         open_editor(); guide_from_home = true; enter_guide();
     }
@@ -2018,7 +2051,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // The rounds play on the editor page itself. Choosing A or B makes that curve the current one,
     // which on the earbuds is what you would hear, so your ears decide. Nothing is created until Keep.
     // Compare no longer moves the curve: what you made stays, and how it was shows as a dotted afterimage.
-    dusk::Curve eq_target() const { return guide ? guide->curve() : model.current().draft; }
+    bool guide_before() const { return guide && guide->reviewing() && guide->before; }
+    dusk::Curve eq_target() const { return guide_before() ? model.current().saved : guide ? guide->curve() : model.current().draft; }
     void show_curve(bool animate) {
         push_heard();
         if (animate && animations) { eq_from = eq_shown; eq_blend = 0; wake(); return; }
@@ -2042,61 +2076,117 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         move_compositor(element, 24.f * direction, 0, 240, false); move_compositor(element, 0, 0, 240, true);
         fade(element, 1, 240, 0);
     }
+    // The five tiles. Round 1 is Sony's 1 to 5. Round 2 is 6, 7, your pick, 8, 9, so the pick sits in
+    // the middle. The result uses the first two tiles as After and Before.
+    static int guide_option(int stage, int slot) { static constexpr int second[] = {1, 2, 0, 3, 4}; return stage == 1 ? second[slot] : slot; }
+    int guide_slot() const {
+        if (!guide) return -1;
+        if (guide->reviewing()) return guide->before ? 1 : 0;
+        for (int slot = 0; slot < 5; ++slot) if (guide_option(guide->stage, slot) == (guide->stage ? guide->second : guide->first)) return slot;
+        return -1;
+    }
+    static std::wstring guide_name(int slot) { return L"GuideOption" + std::to_wstring(slot); }
     void place_guide_pill(bool animate) {
-        FrameworkElement key{nullptr};
-        if (guide && !guide->reviewing() && guide->answered[static_cast<size_t>(guide->stage)]) {
-            const int choice = guide->choices[static_cast<size_t>(guide->stage)];
-            if (choice != 1) key = get<FrameworkElement>(choice == 0 ? L"GuideA" : L"GuideB");
-        }
-        if (!key) guide_pill.to_width = 0; // the next one appears in place instead of sliding from the last round
+        const int slot = guide_slot();
+        FrameworkElement key = slot >= 0 ? get<FrameworkElement>(guide_name(slot).c_str()) : FrameworkElement{nullptr};
+        if (!animate) guide_pill.to_width = 0; // a new round's pill appears in place instead of sliding from the last
         place_pill(guide_pill, key, get<FrameworkElement>(L"GuideChoiceHost"), animate);
     }
+    // Clear Bass is part of what the guide changes, so its column stays and follows the curve, but
+    // can't be dragged until the guide is over. The bands' sliders and handles are put back after.
+    void bass_interactive(bool on) {
+        get<UIElement>(L"BassRow").IsHitTestVisible(on); get<Control>(L"BassSlider").IsTabStop(on);
+        show(L"BandValues", on);
+        if (on) { get<UIElement>(L"BandGrid").IsHitTestVisible(true); fade(get<UIElement>(L"BandGrid"), 1); for (auto const& handle : eq_handles) fade(handle, 1); }
+    }
     void sync_guide(int direction) {
-        static constexpr const wchar_t* rounds[] = {L"Low end", L"Vocals", L"Upper range"};
-        static constexpr const wchar_t* options[][2] = {{L"Lighter", L"Fuller"}, {L"Softer", L"Forward"}, {L"Warmer", L"Clearer"}};
-        auto const& g = *guide; const bool review = g.reviewing(); const auto stage = static_cast<size_t>(std::min(g.stage, dusk::Guide::kRounds - 1));
-        get<TextBlock>(L"GuideStep").Text(review ? std::wstring(L"Your EQ") : std::wstring(rounds[stage]) + L" · " + std::to_wstring(stage + 1) + L" of 3");
-        get<TextBlock>(L"GuideHint").Text(review ? L"Choose how strong it is, then keep it as a new EQ. Your current EQ stays as it is until then."
-                                                 : L"Play some music and switch between A and B to hear each one on your earbuds.");
-        show(L"GuideChoiceHost", !review); show(L"GuideReview", review); show(L"GuideUnsureButton", !review);
-        if (!review) { get<TextBlock>(L"GuideALabel").Text(options[stage][0]); get<TextBlock>(L"GuideBLabel").Text(options[stage][1]); }
-        const bool answered = !review && g.answered[stage];
-        get<ToggleButton>(L"GuideA").IsChecked(answered && g.choices[stage] == 0);
-        get<ToggleButton>(L"GuideB").IsChecked(answered && g.choices[stage] == 2);
-        auto next = get<Button>(L"GuideNextButton"); next.Content(box_value(review ? L"Keep" : L"Next")); next.IsEnabled(g.can_advance());
+        auto const& g = *guide; const bool review = g.reviewing();
+        static constexpr const wchar_t* steps[] = {L"Pick a sound", L"A closer match", L"Your EQ"}; // the dots already say which step
+        get<TextBlock>(L"GuideStep").Text(guide_paused ? L"Paused · no music playing" : steps[g.stage]); // no instructions: the owner finds them out of keeping
+        for (int slot = 0; slot < 5; ++slot) {
+            const auto suffix = std::to_wstring(slot);
+            std::wstring label = review ? (slot ? L"Before" : L"After")
+                               : g.stage == 1 ? (slot == 2 ? std::to_wstring(g.first + 1) : std::to_wstring(guide_option(1, slot) + 5))
+                                              : std::to_wstring(slot + 1);
+            get<TextBlock>((L"GuideLabel" + suffix).c_str()).Text(label);
+            auto tile = get<ToggleButton>(guide_name(slot).c_str());
+            show(guide_name(slot).c_str(), !review || slot < 2);
+            tile.IsChecked(slot == guide_slot());
+            Automation::AutomationProperties::SetName(tile, review ? label : L"Sound " + label);
+        }
+        show(L"GuideRetryButton", review);
+        get<Button>(L"GuideNextButton").Content(box_value(review ? L"Keep" : L"Next"));
+        get<Button>(L"GuideNextButton").IsEnabled(!guide_paused);
+        for (int slot = 0; slot < 5; ++slot) get<Control>(guide_name(slot).c_str()).IsTabStop(!guide_paused);
         get<Button>(L"GuideBackButton").IsEnabled(g.stage > 0);
         for (size_t i = 0; i < guide_dots.size(); ++i) {
-            const bool current = !review && i == stage;
+            const bool current = static_cast<int>(i) == g.stage;
             guide_dots[i].Scale({current ? 1.f : 1.f / 3, 1, 1});
-            guide_dots[i].Opacity(current ? 1 : (review || static_cast<int>(i) < g.stage) ? .7 : .28);
+            guide_dots[i].Opacity(current ? 1 : static_cast<int>(i) < g.stage ? .7 : .28);
         }
+        // The result shows its numbers, like Sony's; the rounds are chosen by ear.
+        const auto shown = eq_target();
+        auto values = get<UIElement>(L"BandValues");
+        const bool appearing = review && values.Visibility() != Visibility::Visible;
+        show(L"BandValues", review); if (appearing) fade(values, 1, 240, 0);
+        for (size_t i = 0; i < 5; ++i) band_values[i].Text(signed_value(shown[i]));
+        get<TextBlock>(L"BassValue").Text(signed_value(shown[5]));
         root.UpdateLayout();
         place_guide_pill(direction == 0);
-        for (auto name : {L"GuideStep", L"GuideHint", L"GuideContent"}) slide_in(get<FrameworkElement>(name), direction);
+        for (auto name : {L"GuideStep", L"GuideContent"}) slide_in(get<FrameworkElement>(name), direction);
         show_curve(true);
+    }
+    // The editor as it is outside Find your EQ: header, readouts, draggable bands and Clear Bass.
+    void restore_editor(bool animate) {
+        show(L"GuideHeader", false); show(L"GuidePanel", false);
+        for (auto name : {L"EqHeader", L"BandValues"}) { show(name, true); if (animate) fade(get<UIElement>(name), 1, 200, 0); else fade(get<UIElement>(name), 1, 0); }
+        get<UIElement>(L"BassRow").IsHitTestVisible(true); get<Control>(L"BassSlider").IsTabStop(true);
+        get<UIElement>(L"BandGrid").IsHitTestVisible(true); fade(get<UIElement>(L"BandGrid"), 1, animate ? 200 : 0);
+        for (auto const& handle : eq_handles) fade(handle, 1, animate ? 200 : 0);
+    }
+    bool editor_editable() {
+        auto visual_opacity = [](UIElement const& e) { return Hosting::ElementCompositionPreview::GetElementVisual(e).Opacity(); };
+        return get<UIElement>(L"BandGrid").IsHitTestVisible() && visual_opacity(get<UIElement>(L"BandGrid")) > .99f && get<UIElement>(L"BassRow").IsHitTestVisible()
+            && get<UIElement>(L"EqHeader").Visibility() == Visibility::Visible && get<UIElement>(L"GuidePanel").Visibility() == Visibility::Collapsed;
     }
     void enter_guide() {
         guide = dusk::Guide{};
-        updating = true; get<Slider>(L"GuideStrength").Value(guide->strength); updating = false;
+        guide_paused = false; guide_silence_ms = 0;
+        get<UIElement>(L"GuideChoiceHost").IsHitTestVisible(true); fade(get<UIElement>(L"GuideChoiceHost"), 1, 0);
         end_compare();
-        for (auto name : {L"EqHeader", L"BandValues", L"BassRow"}) show(name, false);
-        bass_column(false);
+        show(L"EqHeader", false); bass_interactive(false);
         show(L"GuideHeader", true); show(L"GuidePanel", true);
         get<UIElement>(L"BandGrid").IsHitTestVisible(false); fade(get<UIElement>(L"BandGrid"), 0);
         for (auto const& handle : eq_handles) fade(handle, 0);
         for (auto name : {L"GuideHeader", L"GuidePanel"}) fade(get<UIElement>(name), 1, 200, 0);
         sync_guide(0);
-        get<Control>(L"GuideA").Focus(FocusState::Programmatic);
+        get<Control>(L"GuideOption0").Focus(FocusState::Programmatic);
+    }
+    // Paused: the choices dim like disconnected controls and stop responding, Next and Keep are off,
+    // and the title says why. Cancel, Back and Start again still work; picks are kept.
+    void apply_guide_pause() {
+        if (!guide) return;
+        auto host = get<UIElement>(L"GuideChoiceHost");
+        host.IsHitTestVisible(!guide_paused); fade(host, guide_paused ? .4f : 1.f, 200);
+        get<TextBlock>(L"GuideStep").Text(guide_paused ? std::wstring(L"Paused · no music playing")
+            : std::wstring(guide->stage == 0 ? L"Pick a sound" : guide->stage == 1 ? L"A closer match" : L"Your EQ"));
+        get<Button>(L"GuideNextButton").IsEnabled(!guide_paused);
+        for (int slot = 0; slot < 5; ++slot) get<Control>(guide_name(slot).c_str()).IsTabStop(!guide_paused);
+        if (guide_paused && get<Control>(L"GuideNextButton").FocusState() != FocusState::Unfocused) get<Control>(L"GuideBackButton").Focus(FocusState::Programmatic);
+    }
+    void choose_guide(int slot) {
+        if (!guide || guide_paused) return;
+        if (guide->reviewing()) guide->before = slot == 1; else guide->choose(guide_option(guide->stage, slot));
+        sync_guide(0);
     }
     void finish_guide(bool keep) {
         if (!guide) return;
         const auto result = guide->curve(); guide.reset();
-        show(L"GuideHeader", false); show(L"GuidePanel", false);
-        if (!keep && guide_from_home) { leave_editor(); return; }
-        for (auto name : {L"EqHeader", L"BandValues", L"BassRow"}) { show(name, true); fade(get<UIElement>(name), 1, 200, 0); }
-        bass_column(true);
-        get<UIElement>(L"BandGrid").IsHitTestVisible(true); fade(get<UIElement>(L"BandGrid"), 1);
-        for (auto const& handle : eq_handles) fade(handle, 1);
+        const bool from_home = guide_from_home; guide_from_home = false;
+        // Always put the editor back first, however the guide ends. Leaving from the library used to
+        // return before this, and every EQ opened after that could not be edited (fixed in 0.7.2).
+        restore_editor(true);
+        if (!keep && from_home) { leave_editor(); return; }
         if (keep) {
             push_history(-5); compare_curve = model.current().saved; // compare the new EQ with what was playing
             model.create(); auto& profile = model.current(); profile.name = L"Personal EQ";
@@ -2107,13 +2197,11 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         get<Control>(L"CompareButton").Focus(FocusState::Programmatic);
     }
     void bind() {
-        get<ToggleButton>(L"GuideA").Click([this](auto&&, auto&&) { if (guide) { guide->choose(0); sync_guide(0); } });
-        get<ToggleButton>(L"GuideB").Click([this](auto&&, auto&&) { if (guide) { guide->choose(2); sync_guide(0); } });
-        get<HyperlinkButton>(L"GuideUnsureButton").Click([this](auto&&, auto&&) { if (guide) { guide->choose(1); guide->next(); sync_guide(1); } });
-        click(L"GuideNextButton", [this] { if (!guide) return; if (guide->reviewing()) finish_guide(true); else { guide->next(); sync_guide(1); } });
+        for (int slot = 0; slot < 5; ++slot) get<ToggleButton>(guide_name(slot).c_str()).Click([this, slot](auto&&, auto&&) { choose_guide(slot); });
+        get<HyperlinkButton>(L"GuideRetryButton").Click([this](auto&&, auto&&) { if (guide) { guide->retry(); sync_guide(-1); get<Control>(L"GuideOption0").Focus(FocusState::Programmatic); } });
+        click(L"GuideNextButton", [this] { if (!guide || guide_paused) return; if (guide->reviewing()) finish_guide(true); else { guide->next(); sync_guide(1); } });
         click(L"GuideBackButton", [this] { if (guide && guide->back()) sync_guide(-1); });
         click(L"GuideCancelButton", [this] { finish_guide(false); });
-        get<Slider>(L"GuideStrength").ValueChanged([this](auto&&, Primitives::RangeBaseValueChangedEventArgs const& args) { if (updating || !guide) return; guide->strength = args.NewValue(); show_curve(true); });
         click(L"EditorNewButton",[this]{model.create();rebuild_banks();open_editor();});
         click(L"SettingsButton", [this] { navigate(L"Settings"); });
         click(L"OfflineReconnect", [this] { reconnect(); });
@@ -2128,6 +2216,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         get<MenuFlyoutItem>(L"NewCopyAction").Click([this](auto&&, auto&&) { if (!model.current().curve_known) return; model.duplicate(); rebuild_banks(); close_drawer(); open_editor(); retarget(); });
         get<Button>(L"NewButton").Flyout().Opening([this](auto&&, auto&&) {
             auto copy = get<MenuFlyoutItem>(L"NewCopyAction"); copy.IsEnabled(model.current().curve_known); copy.Text(L"Copy of " + model.current().name);
+            // Find your EQ is chosen by ear, so like Sony's it needs music playing (owner, 5 Nov 2026).
+            auto find = get<MenuFlyoutItem>(L"NewGuideAction"); find.IsEnabled(music_playing);
+            find.Text(music_playing ? L"Find your EQ (listen and pick)" : L"Find your EQ (play music first)");
         });
         get<TextBox>(L"LibrarySearch").TextChanged([this](auto&&, auto&&) { if (drawer_open) rebuild_library(); });
         root.KeyDown([this](auto&&, Input::KeyRoutedEventArgs const& args) {
@@ -2212,7 +2303,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // Compare is held, or the chosen EQ. Sony presets are selected on the earbuds; everything else
     // is written to Manual.
     std::pair<std::string, std::function<void()>> heard() {
-        if (guide) { auto c = guide->curve(); return {curve_key(c), [this, c] { send_command(L"apply", 0, c); }}; }
+        if (guide && !guide_before()) { auto c = guide->curve(); return {curve_key(c), [this, c] { send_command(L"apply", 0, c); }}; }
         if (comparing) { auto c = compare_curve; return {curve_key(c), [this, c] { send_command(L"apply", 0, c); }}; }
         if (model.selected >= model.profiles.size()) return {pushed_key, [] {}};
         auto const& p = model.current();
@@ -2427,8 +2518,14 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if(review_view==L"Unknown"){model.select(model.profiles.size()-1);model.editing=true;sync_eq();navigate(L"Eq");}
         if (review_view == L"Beyond") { model.select(8);model.editing=true;sync_eq();navigate(L"Eq"); }
         if(review_view==L"New"){model.create();rebuild_banks();open_editor();}
-        if(review_view==L"Guide1"||review_view==L"GuideReview"){open_editor();enter_guide();guide->choose(2);
-            if(review_view==L"GuideReview"){guide->next();guide->choose(0);guide->next();guide->choose(2);guide->next();}sync_guide(0);}
+        if(review_view==L"Guide1"||review_view==L"Guide2"||review_view==L"GuideReview"){open_editor();enter_guide();guide->choose(2); // Sony's 3
+            if(review_view!=L"Guide1"){guide->next();guide->choose(4);} // then 9
+            if(review_view==L"GuideReview")guide->next();
+            sync_guide(0);}
+        // The 0.7.1 bug: New > Find your EQ, Cancel, then open an EQ. It must open editable.
+        // Music stops during the guide: paused, choices dimmed and locked (review_silent is set for it).
+        if (review_view == L"GuidePaused") { open_editor(); enter_guide(); guide->choose(2); sync_guide(0); guide_silence_ms = 1000; guide_paused = true; apply_guide_pause(); }
+        if (review_view == L"GuideCancelled") { start_guide_from_home(); finish_guide(false); model.select(1); open_editor(); }
         if (review_view == L"Settings") navigate(L"Settings");
         blend = 1;
         apply_light();
@@ -2565,6 +2662,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 capture_window(folder/L"readme-editor.bmp");
                 start_compare();for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                 capture_window(folder/L"readme-compare.bmp");end_compare();
+                enter_guide();choose_guide(2);for(int i=0;i<90;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-guide.bmp");finish_guide(false);
                 navigate(L"Settings");root.UpdateLayout();layout_settings();
                 for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                 capture_window(folder/L"readme-settings.bmp");
@@ -2598,7 +2697,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 std::ofstream summary(folder/L"costs.csv");summary<<"operation,milliseconds\n";for(auto const& sample:costs)summary<<sample.name<<','<<sample.ms<<'\n';
                 animations=false;demo_music=false;timer.Stop();model.editing=false;drawer_open=false;drawer_t=0;show(L"Drawer",false);navigate(L"Main");
             }
-            {std::ofstream state(folder/(filename+L"-state.csv"));state<<"page,glow_visible,all_label,eq_all_label\n"<<to_string(page)<<','<<(glow_level>0)<<','<<to_string(get<TextBlock>(L"AllLabel").Text())<<','<<to_string(get<TextBlock>(L"EqAllLabel").Text())<<'\n';}
+            {std::ofstream state(folder/(filename+L"-state.csv"));state<<"page,glow_visible,all_label,eq_all_label,editable,guide_paused\n"<<to_string(page)<<','<<(glow_level>0)<<','<<to_string(get<TextBlock>(L"AllLabel").Text())<<','<<to_string(get<TextBlock>(L"EqAllLabel").Text())<<','<<(page==L"Eq"?(editor_editable()?"yes":"no"):"-")<<','<<(guide?(guide_paused&&!get<Button>(L"GuideNextButton").IsEnabled()&&!get<UIElement>(L"GuideChoiceHost").IsHitTestVisible()?"yes":"no"):"-")<<'\n';}
             auto audio=read_timeline();
             export_layout(folder/(filename+L"-layout.csv"));
             std::ofstream samples(folder/(filename+L"-pixels.csv"));samples<<"seconds,phase,rgb,pixel_r,pixel_g,pixel_b,line_sequence,glow_sequence,surface_allocations\n";
@@ -2687,8 +2786,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command, int) {
         return args.substr(pos, args.find(L' ', pos) - pos);
     };
     review_view = option(L"--view=", L"Main");
-    review_pass = option(L"--pass=", L"pass1");
-    review_timeline=option(L"--audio-timeline=",L"");
+    review_silent = review_view == L"GuidePaused";
+    review_pass = option(L"--pass=", L"pass1");    review_timeline=option(L"--audio-timeline=",L"");
     review_time=std::stod(option(L"--audio-time=",L"30"));
     review_wave_motion=args.find(L"--wave-motion-review")!=std::wstring::npos;
     stage_bench=args.find(L"--stage-bench")!=std::wstring::npos;

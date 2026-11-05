@@ -233,35 +233,30 @@
     <TextBlock x:Name="EqNote" Visibility="Collapsed"/>
    </Grid>
    <!-- Find your EQ: listening rounds below the same big curve. -->
-   <Grid x:Name="GuidePanel" Grid.Row="2" Grid.RowSpan="3" Margin="28,14,28,22" RowSpacing="14" Visibility="Collapsed">
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <Grid x:Name="GuidePanel" Grid.Row="3" Grid.RowSpan="2" Margin="28,0,28,22" RowSpacing="14" Visibility="Collapsed">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <Grid>
-     <TextBlock x:Name="GuideStep" FontSize="16" VerticalAlignment="Center"/>
+     <TextBlock x:Name="GuideStep" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
      <StackPanel x:Name="GuideDots" Orientation="Horizontal" Spacing="2" HorizontalAlignment="Right" VerticalAlignment="Center"/>
     </Grid>
-    <TextBlock x:Name="GuideHint" Grid.Row="1" FontSize="13" Foreground="{ThemeResource SoftText}" TextWrapping="Wrap"/>
-    <Grid x:Name="GuideContent" Grid.Row="2" Height="96">
-     <Grid x:Name="GuideChoiceHost" HorizontalAlignment="Left" VerticalAlignment="Top">
+    <Grid x:Name="GuideContent" Grid.Row="1" Height="112">
+     <Grid x:Name="GuideChoiceHost" HorizontalAlignment="Center" VerticalAlignment="Top">
       <Grid.Resources><SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#0DFFFFFF"/><SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#1AFFFFFF"/><SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#0DFFFFFF"/><SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#F2F2F2"/><SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#FFFFFF"/><SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#F2F2F2"/></Grid.Resources>
       <Canvas IsHitTestVisible="False"><Border x:Name="GuidePill" CornerRadius="8" Background="#2BFFFFFF"/></Canvas>
-      <Grid ColumnSpacing="8">
-       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-       <ToggleButton x:Name="GuideA" Width="220" Height="96" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Stretch">
-        <Grid><TextBlock Text="A" FontSize="12" Foreground="{ThemeResource SoftText}"/><TextBlock x:Name="GuideALabel" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24" VerticalAlignment="Bottom"/></Grid>
-       </ToggleButton>
-       <ToggleButton x:Name="GuideB" Grid.Column="1" Width="220" Height="96" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Stretch">
-        <Grid><TextBlock Text="B" FontSize="12" Foreground="{ThemeResource SoftText}"/><TextBlock x:Name="GuideBLabel" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24" VerticalAlignment="Bottom"/></Grid>
-       </ToggleButton>
-      </Grid>
+      <!-- Five sounds, numbered like Sony's. Round 2 puts the first pick in the middle; the result
+           uses the first two as After and Before. Labels are set in sync_guide. -->
+      <StackPanel x:Name="GuideOptions" Orientation="Horizontal" Spacing="8">
+       <ToggleButton x:Name="GuideOption0" Width="128" Height="112" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Bottom"><TextBlock x:Name="GuideLabel0" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24"/></ToggleButton>
+       <ToggleButton x:Name="GuideOption1" Width="128" Height="112" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Bottom"><TextBlock x:Name="GuideLabel1" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24"/></ToggleButton>
+       <ToggleButton x:Name="GuideOption2" Width="128" Height="112" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Bottom"><TextBlock x:Name="GuideLabel2" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24"/></ToggleButton>
+       <ToggleButton x:Name="GuideOption3" Width="128" Height="112" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Bottom"><TextBlock x:Name="GuideLabel3" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24"/></ToggleButton>
+       <ToggleButton x:Name="GuideOption4" Width="128" Height="112" CornerRadius="8" Padding="16,10" HorizontalContentAlignment="Left" VerticalContentAlignment="Bottom"><TextBlock x:Name="GuideLabel4" FontFamily="Segoe UI Variable Display" FontWeight="Light" FontSize="24"/></ToggleButton>
+      </StackPanel>
      </Grid>
-     <StackPanel x:Name="GuideReview" Spacing="6" MaxWidth="520" HorizontalAlignment="Left" VerticalAlignment="Top" Visibility="Collapsed">
-      <TextBlock Text="Strength" FontSize="13"/>
-      <Slider x:Name="GuideStrength" Minimum="0" Maximum="1" StepFrequency="0.05" Width="448" HorizontalAlignment="Left" AutomationProperties.Name="EQ strength" IsThumbToolTipEnabled="False"/>
-     </StackPanel>
     </Grid>
-    <Grid Grid.Row="3" ColumnSpacing="8">
+    <Grid Grid.Row="2" ColumnSpacing="8">
      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-     <HyperlinkButton x:Name="GuideUnsureButton" Content="Can't tell them apart" VerticalAlignment="Center"/>
+     <HyperlinkButton x:Name="GuideRetryButton" Content="Start again" VerticalAlignment="Center" Visibility="Collapsed"/>
      <Button x:Name="GuideBackButton" Grid.Column="1" Content="Back" Height="40" Padding="16,0"/>
      <Button x:Name="GuideNextButton" Grid.Column="2" Content="Next" Height="40" Padding="20,0" MinWidth="96"/>
     </Grid>

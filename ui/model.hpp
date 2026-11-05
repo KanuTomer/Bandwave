@@ -22,27 +22,43 @@ struct Profile {
     unsigned preset = 0; // for Sony presets: the earbuds' own preset id
 };
 
-inline Curve guided_curve(std::array<int,3> choices,double strength){
-    strength=std::clamp(strength,0.0,1.0);for(auto& choice:choices)choice=std::clamp(choice,0,2)-1;
-    auto gain=[&](int choice,int scale){return static_cast<int>(std::lround(choice*scale*strength));};
-    // Five bands only. Clear Bass is a separate earbud setting, not the low end of the EQ, so the guide leaves it at 0.
-    return {gain(choices[0],4),0,gain(choices[1],4),gain(choices[2],3),gain(choices[2],4),0};
-}
+// Find your EQ uses Sony's own candidates, read from what Sony's app writes to a WF-C710N
+// (Bluetooth log, 5 November 2026). They move only Clear Bass and the top three bands:
+// 400 Hz and 1 kHz stay at 0. Curves are {400, 1k, 2.5k, 6.3k, 16k, Clear Bass}.
+inline constexpr std::array<Curve, 5> kGuideFirst{{
+    {0, 0, 0, 0, 0, 0},     // 1: as it is
+    {0, 0, -1, -2, -3, 6},  // 2: more bass, softer top
+    {0, 0, 1, 2, 3, 6},     // 3: more bass, brighter top
+    {0, 0, 1, 2, 3, -6},    // 4: less bass, brighter top
+    {0, 0, -1, -2, -3, -6}, // 5: less bass, softer top
+}};
+// Round 2: the first pick plus four variations of it, Sony's 6 to 9.
+inline constexpr std::array<std::array<Curve, 4>, 5> kGuideSecond{{
+    {{{0, 0, 0, 0, 0, 6}, {0, 0, 1, 2, 3, 0}, {0, 0, 0, 0, 0, -6}, {0, 0, -1, -2, -3, 0}}},
+    {{{0, 0, -2, -4, -6, 9}, {0, 0, 0, -1, -2, 9}, {0, 0, 0, -1, -2, 3}, {0, 0, -2, -4, -6, 3}}},
+    {{{0, 0, 0, 1, 2, 9}, {0, 0, 2, 4, 6, 9}, {0, 0, 2, 4, 6, 3}, {0, 0, 0, 1, 2, 3}}},
+    {{{0, 0, 0, 1, 2, -3}, {0, 0, 2, 4, 6, -3}, {0, 0, 2, 4, 6, -9}, {0, 0, 0, 1, 2, -9}}},
+    {{{0, 0, -2, -4, -6, -3}, {0, 0, 0, -1, -2, -3}, {0, 0, 0, -1, -2, -9}, {0, 0, -2, -4, -6, -9}}},
+}};
 
-// Find your EQ: three rounds, each a choice heard between two versions. A is 0, B is 2, and
-// "can't tell" or no choice yet is 1. Nothing in the model changes until the result is kept.
+// Find your EQ, as Sony's app does it: pick one of five sounds, then one of your pick and four
+// variations of it, then hear the result against what was playing before. One option is always
+// selected, and each is heard as soon as it is chosen. Nothing in the model changes until Keep.
 struct Guide {
-    static constexpr int kRounds = 3;
-    int stage = 0;
-    std::array<int, 3> choices{1, 1, 1};
-    std::array<bool, 3> answered{};
-    double strength = .75;
+    static constexpr int kRounds = 2, kSteps = 3;
+    int stage = 0;    // 0 first round, 1 second round, 2 result
+    int first = 0;    // 0 to 4: Sony's 1 to 5
+    int second = 0;   // 0 is the first pick itself, 1 to 4 are Sony's 6 to 9
+    bool before = false; // on the result: play what was playing before
     bool reviewing() const { return stage >= kRounds; }
-    Curve curve() const { return guided_curve(choices, reviewing() ? strength : 1); }
-    void choose(int option) { if (!reviewing()) { choices[static_cast<size_t>(stage)] = std::clamp(option, 0, 2); answered[static_cast<size_t>(stage)] = true; } }
-    bool can_advance() const { return reviewing() || answered[static_cast<size_t>(stage)]; }
-    void next() { if (can_advance()) stage = std::min(stage + 1, kRounds); }
-    bool back() { if (!stage) return false; --stage; return true; }
+    Curve curve() const { return stage == 0 || !second ? kGuideFirst[static_cast<size_t>(first)] : kGuideSecond[static_cast<size_t>(first)][static_cast<size_t>(second - 1)]; }
+    void choose(int option) {
+        if (stage == 0) { first = std::clamp(option, 0, 4); second = 0; }
+        else if (stage == 1) second = std::clamp(option, 0, 4);
+    }
+    void next() { if (stage < kRounds) { ++stage; before = false; } }
+    bool back() { if (!stage) return false; --stage; before = false; return true; }
+    void retry() { *this = Guide{}; }
 };
 
 enum class Noise { Cancelling, Ambient, Off };
