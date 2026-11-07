@@ -62,27 +62,57 @@ inline double advance_phase(double phase, float energy, double ticks = 1) {
     return phase - std::floor(phase);
 }
 
+// What the listener's music is usually like, per band: a typical level and how far it strays from
+// it (0.8.0). Learned slowly while music plays (about 5 minutes) and saved with the app's settings,
+// so the wave and the colour fit any kind of music from the first second. Only these 14 numbers are
+// kept: nothing about what was played. The defaults are typical music: strong bass, soft treble.
+struct MusicProfile {
+    static constexpr double kMinutes = 5;
+    std::array<double, kBands> mean{.80, .76, .66, .56, .46, .36, .26};
+    std::array<double, kBands> spread{.08, .08, .08, .08, .08, .08, .08};
+    void learn(std::array<float, kBands> const& levels, double seconds) {
+        const double rate = 1 - std::exp(-seconds / (kMinutes * 60));
+        for (size_t i = 0; i < kBands; ++i) {
+            mean[i] += (levels[i] - mean[i]) * rate;
+            spread[i] += (std::abs(levels[i] - mean[i]) - spread[i]) * rate;
+        }
+    }
+    double width(size_t i) const { return std::max(.04, spread[i]); }
+    // A band's level against what is usual for it: 0.5 is usual, 1 is far louder than usual.
+    float relative(size_t i, float level) const {
+        if (level < .02f) return 0; // silence stays still
+        return static_cast<float>(std::clamp(.5 + (level - mean[i]) / (4 * width(i)), 0.0, 1.0));
+    }
+    // How unusually strong a band is right now, for the colour. 0 when it is at or below usual.
+    double lift(size_t i, float level) const { return std::max(0.0, (level - mean[i]) / width(i)); }
+};
+
 // The same elapsed-time response is used by live WASAPI and silent file tests.
 struct ReactiveState {
     std::array<Envelope, kBands> envelopes{};
     std::array<double, kBands> pulse{};
     double phase = 0, energy = 0;
     bool playing = false;
-    std::array<double,kBands> baseline{};
+    MusicProfile profile;
     void step(std::array<float, kBands> const& levels, double seconds) {
         // Small integration steps make the envelope insensitive to UI cadence.
         const int count = std::max(1, static_cast<int>(std::ceil(seconds * 300)));
         const double dt = seconds / count;
         playing = *std::max_element(levels.begin(), levels.end()) > .02f;
         for (int n = 0; n < count; ++n) {
+            if (playing) profile.learn(levels, dt);
             energy = 0;
             for (size_t i = 0; i < kBands; ++i) {
-                pulse[i] = envelopes[i].step(levels[i], dt);
+                // The motion follows each band against its own usual level, so quiet music moves
+                // and loud, compressed music isn't pinned at the limit.
+                pulse[i] = envelopes[i].step(profile.relative(i, levels[i]), dt);
                 energy += pulse[i] / kBands;
             }
             if(playing){
+                // Each colour wins when its band is unusually strong for this music. Raw levels let
+                // the bass, always the loudest, keep the light red (owner, 7 Nov 2026).
                 double vx=0,vy=0;
-                for(size_t i=0;i<kBands;++i){baseline[i]+=(levels[i]-baseline[i])*(1-std::exp(-dt/3));double weight=std::max(0.0,levels[i]-baseline[i])+.12*levels[i];double angle=6.283185307179586*i/kBands;vx+=weight*std::cos(angle);vy+=weight*std::sin(angle);}
+                for(size_t i=0;i<kBands;++i){double weight=profile.lift(i,levels[i]);double angle=6.283185307179586*i/kBands;vx+=weight*std::cos(angle);vy+=weight*std::sin(angle);}
                 if(std::hypot(vx,vy)>.02){double target=std::atan2(vy,vx)/6.283185307179586;if(target<0)target+=1;double difference=target-phase;difference-=std::floor(difference+.5);if(std::abs(difference)>.015)phase+=difference*(1-std::exp(-dt/.6));phase-=std::floor(phase);}
             }
         }
