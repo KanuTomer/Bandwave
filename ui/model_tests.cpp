@@ -141,6 +141,17 @@ int main() {
         ReactiveState low,high;std::array<float,7> bass{},treble{};bass[0]=.8f;treble[5]=.8f;
         for(int i=0;i<900;++i){low.step(bass,1.0/30);high.step(treble,1.0/30);}CHECK(std::abs(low.phase-high.phase)>.2);
         auto held=high.phase;for(int i=0;i<300;++i)high.step(treble,1.0/30);CHECK(std::abs(high.phase-held)<.02);
+        // 0.8.0, judged against the learned profile. Typical music with the 1.1-2.5 kHz band (blue)
+        // lifted above its usual level turns the light blue, although the bass is still louder.
+        {ReactiveState s;std::array<float,7> typical{};for(size_t i=0;i<7;++i)typical[i]=static_cast<float>(s.profile.mean[i]);
+         auto vocal=typical;vocal[4]+=.2f;for(int i=0;i<300;++i)s.step(vocal,1.0/30);
+         double off=s.phase-4.0/7;off-=std::floor(off+.5);CHECK(std::abs(off)<.06);CHECK(vocal[0]>vocal[4]);}
+        // Music at its usual level everywhere doesn't drag the colour back to red.
+        {ReactiveState s;s.phase=.5;std::array<float,7> typical{};for(size_t i=0;i<7;++i)typical[i]=static_cast<float>(s.profile.mean[i]);
+         for(int i=0;i<300;++i)s.step(typical,1.0/30);CHECK(std::abs(s.phase-.5)<.02);}
+        // Quiet music, once learned, moves the wave like loud music does: its own rises count.
+        {MusicProfile p;std::array<float,7> quiet{};quiet.fill(.3f);for(int i=0;i<1200;++i)p.learn(quiet,1);
+         CHECK(std::abs(p.mean[3]-.3)<.01);CHECK(p.relative(3,.3f)>.45f&&p.relative(3,.3f)<.55f);CHECK(p.relative(3,.38f)>.7f);CHECK(p.relative(3,0)==0);}
     }
     {
         Model model;const auto original=model.library_label();model.select(8);CHECK(model.library_label()==original);model.create();auto created=model.library_label();CHECK(created!=original&&created.find(L"All ")==0);model.erase();CHECK(model.library_label()==original);model.undo_delete();CHECK(model.library_label()==created);

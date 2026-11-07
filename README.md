@@ -12,8 +12,14 @@ without reaching for your phone.
   sway with the music, in a colour that follows it. The middle lines are sharp and the outer
   ones soft, like a camera focused on the centre. With no music the lines drift quietly, and in
   the tray Sound Connect draws nothing at all.
+- **Fits your music:** the lines and the colour learn what you usually listen to, so quiet acoustic
+  tracks move them as much as loud electronic ones, and every colour gets its turn: blue when the
+  vocals lead, red when the bass does. Choose **Calm**, **Balanced** or **Lively** in Settings >
+  App and widget. Rest the pointer on the choice and Settings steps aside to show the waves moving
+  with your music, so you can see the difference before you leave.
 - **See everything at a glance:** left, right and case batteries, and whether each earbud is
-  connected.
+  connected. While the earbuds aren't connected, the controls and the EQ library rest, so nothing
+  here drifts from what your phone may have changed on them.
 - **Switch sound modes instantly:** Noise cancelling, Ambient or Off.
 - **Keep an EQ library:** Sony's presets, with their real curves read from your earbuds, plus
   as many of your own EQs as you like. Six sit on the main screen, one tap away. The library
@@ -34,7 +40,8 @@ without reaching for your phone.
   phone and other devices. What's already in those slots is imported the first time you connect.
 - **Change your earbuds' settings:** Bluetooth priority, DSEE, ambient level, voice focus, voice
   guidance, touch controls, the noise cycle, power options, connecting to two devices at once
-  and hearing your own voice on calls. Only the settings your earbuds offer are shown.
+  and hearing your own voice on calls. Only the settings your earbuds offer are shown, and the
+  page fits smaller windows.
 - **Use the widget:** batteries, sound mode and your six main EQs in Win + W, without opening
   the app.
 - **Start with Windows and keep it in the tray,** if you like. Both are in Settings > App and
@@ -53,7 +60,7 @@ without reaching for your phone.
 1. Turn on **Developer Mode** in Windows Settings > System > For developers. Windows only shows
    widgets from apps outside the Microsoft Store when it's on.
 2. Pair your WF-C710N in Windows Bluetooth settings.
-3. Download **EarbudControls-Setup-0.7.4.exe** from
+3. Download **EarbudControls-Setup-0.8.3.exe** from
    [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
    app and the widget together.
 4. Open **Sound Connect** from Start. To add the widget, open Win + W, choose Add widgets, then
@@ -71,8 +78,9 @@ Setup also installs Microsoft's Windows App Runtime if your PC doesn't already h
 
 Sound Connect checks for a new version once a day. When one is out, choose **Update** in the
 title bar: it downloads, checks the file's checksum and signature, and updates in place,
-keeping your EQs and settings. You can turn the check off in Settings > App and widget. Running
-a newer setup yourself works the same way.
+keeping your EQs and settings. To look straight away, choose **Check now** in Settings > App and
+widget, where you can also turn the daily check off. Running a newer setup yourself works the
+same way.
 
 ## Good to know
 
@@ -89,8 +97,9 @@ changes your Bluetooth pairing or anything stored on the earbuds.
 ## Privacy
 
 Sound Connect has no account and sends no telemetry. Your EQs and settings stay on your PC, in
-`%LOCALAPPDATA%\Earbud Controls`. The only network request is the optional daily update check
-to this project's GitHub Releases, which sends nothing about you.
+`%LOCALAPPDATA%\Earbud Controls`. To fit the waves to your music it keeps 14 numbers there (how
+loud each frequency range usually is), never what you played. The only network request is the
+update check to this project's GitHub Releases, which sends nothing about you.
 
 ## Build from source
 

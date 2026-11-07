@@ -381,9 +381,10 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 if (quitting || !earbud::updates::load_settings().tray) return;
                 args.Cancel(true); to_tray();
             });
-            window.Closed([this](auto&&, auto&&) { closing=true;remove_tray();timer.Stop();unpace(); spectrum.stop();if(profile_motion){auto folder=directory.parent_path().parent_path()/L"review"/L"live-motion";fs::create_directories(folder);std::ofstream out(folder/L"costs.csv");out<<"operation,milliseconds\n";for(auto const& sample:costs)out<<sample.name<<','<<sample.ms<<'\n';} });
+            window.Closed([this](auto&&, auto&&) { closing=true;save_profile();remove_tray();timer.Stop();unpace(); spectrum.stop();if(profile_motion){auto folder=directory.parent_path().parent_path()/L"review"/L"live-motion";fs::create_directories(folder);std::ofstream out(folder/L"costs.csv");out<<"operation,milliseconds\n";for(auto const& sample:costs)out<<sample.name<<','<<sample.ms<<'\n';} });
             if (start_in_tray) add_tray(); // opened at sign-in: only the tray icon until it's clicked
             else window.Activate();
+            load_profile();
             start_owner_link();
             check_for_update();
             live = true;
@@ -450,8 +451,27 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (visible == listening || !animations || high_contrast) return;
         listening = visible;
         if (visible) { last_tick = precise_ms(); reactive.phase = phase; spectrum.start(); timer.Start(); }
-        else { spectrum.stop(); timer.Stop(); unpace(); }
+        else { spectrum.stop(); timer.Stop(); unpace(); save_profile(); }
     }
+    // The learned music profile (reactive.hpp) and the Wave choice live in app-settings.json.
+    double profile_saved_ms = 0; int wave_response = 1;
+    void load_profile() {
+        if (render_review) return; // reviews use the defaults, so captures don't depend on this PC
+        auto s = earbud::updates::load_settings();
+        wave_response = s.wave;
+        if (s.profile) { reactive.profile.mean = (*s.profile)[0]; reactive.profile.spread = (*s.profile)[1]; }
+        profile_saved_ms = precise_ms();
+    }
+    void save_profile() {
+        if (render_review) return;
+        auto s = earbud::updates::load_settings();
+        s.profile = std::array<std::array<double, 7>, 2>{reactive.profile.mean, reactive.profile.spread};
+        earbud::updates::save_settings(s); profile_saved_ms = precise_ms();
+    }
+    // Calm, Balanced or Lively: how far the lines sway for the same music. Music at its usual level
+    // gives a pulse of about .18; Balanced's 1.6 brings that back to the sway 0.7.x gave loud music.
+    // The 26-DIP cap in draw_field() still keeps the outer lines inside the stage.
+    double wave_gain() const { static constexpr double gains[] = {1.0, 1.6, 2.3}; return gains[std::clamp(wave_response, 0, 2)]; }
 
     // ---------- Background: the spectrum of light ----------
     void build_haze(){
@@ -606,9 +626,11 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         }
         const bool ghost_moving = ghost_t != (comparing ? 1.0 : 0.0);
         if (ghost_moving) ghost_t = std::clamp(ghost_t + (comparing ? 1 : -1) * interval / 150, 0.0, 1.0);
-        const bool decor_active=page==L"Main"; // the stage keeps moving behind the library's glass
+        const bool decor_active=stage_on(); // the stage keeps moving behind the library's glass, and behind Settings while previewing the Wave choice
         // The music's colour moves on the editor too, not just the main page (it froze there until 0.5.21).
         if(decor_active||page==L"Eq")reactive.step(levels, interval / 1000);
+        if (playing && clock - profile_saved_ms > 60000) save_profile(); // at most once a minute
+        if (wave_preview && !preview_possible()) request_wave_preview(false); // the music stopped or the earbuds went
         pulse = reactive.pulse; phase = reactive.phase;
         const double energy = reactive.energy;
         const bool lit = *std::max_element(pulse.begin(), pulse.end()) > .004;
@@ -617,7 +639,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (morphing) blend = std::min(1.0, blend + interval / 900);
         const bool glowing = glow_level != (music_playing ? 1.0 : 0.0);
         if (glowing) glow_level = music_playing ? std::min(1.0, glow_level + interval / 500) : std::max(0.0, glow_level - interval / 1200);
-        if(page==L"Main")apply_light();
+        if(stage_on())apply_light();
         if(page==L"Eq")apply_curve_glow();
         if (reshaping) {
             eq_blend = std::min(1.0, eq_blend + interval / 420);
@@ -640,7 +662,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             apply_drawer();
         }
         const bool tiles_moving = animate_library();
-        const bool stage_visible = page == L"Main";
+        const bool stage_visible = stage_on();
         if (stage_visible) apply_field(now);
         const bool busy = blend < 1 || glowing || eq_blend < 1 || sliding || tiles_moving || (drawer_t != (drawer_open ? 1.0 : 0.0));
         if ((!listening || (!controls_live && presence == 0)) && !busy && !lit) { timer.Stop(); unpace(); return; }
@@ -661,7 +683,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // display's rate (120 Hz here) instead of the app's 30 frames: dwm used about 27% of the GPU
     // for it (0.5.7, 2560x1600). The colour already changes every frame, so nothing is lost.
     void draw_stage(){
-        if(closing||high_contrast||page!=L"Main"||wave_frame.sequence==0||wave_frame.height<=0)return;
+        if(closing||high_contrast||!stage_on()||wave_frame.sequence==0||wave_frame.height<=0)return;
         CostScope cost{"draw_stage"};
         if(!stage.panel){if(std::error_code e;fs::exists(earbud::data_folder()/L"gpu-timing.on",e))stage.timers.log=earbud::data_folder()/L"gpu-timing.csv";if(stage_bench){stage.timers.log=directory.parent_path().parent_path()/L"review"/review_pass/L"gpu-timing.csv";std::error_code e;fs::create_directories(stage.timers.log.parent_path(),e);fs::remove(stage.timers.log,e);}stage.bloom_scale=.775f;/* sqrt(9/15): the bloom was tuned for 9 lines, and 15 would wash out the centre */stage.attach(get<Controls::SwapChainPanel>(L"WaveChain"));}
         stage.frost=static_cast<float>(1-std::pow(1-drawer_t,3)); // frosts in step with the library sliding up
@@ -671,7 +693,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         CostScope cost{"apply_light"};
         show(L"Haze",false);
         // No glow at all in silence; it fades in with the music and out after it.
-        const bool visible=page==L"Main"&&!high_contrast&&glow_level>0;
+        const bool visible=stage_on()&&!high_contrast&&glow_level>0;
         if(!visible){stage.set_colour(rgba(0,0));return;} // the next stage frame draws without glow
         double energy=0;for(auto value:pulse)energy+=value/dusk::kBands;const double level=ease(glow_level);
         stage.set_colour(rgba(dusk::spectrum_color(phase),level*(.24+.10*std::min(1.0,energy*1.4))));
@@ -710,14 +732,17 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (w < 10 || h < 10 || high_contrast) return;
         field_scale = std::min({1.0, (w - 32) / 780, (h - 16) / 280});
         // The outermost line plus its wave and the music's sway (about 45 units) stays 12 DIPs inside.
-        // The lines sit in a band that starts 56 DIPs below the stage's top, so the strip above the
-        // library's glass stays clear and the frosted waves never show their low-resolution edge.
-        const double band_top = std::min(56.0, h * .12), band = h - band_top - 12;
+        // The lines sit in a band that starts 88 DIPs below the stage's top (56 until 0.7.5; the owner
+        // wanted the wave lower, twice), so the strip above the library's glass stays clear and the
+        // frosted waves never show their low-resolution edge. The bottom keeps its 12 DIPs.
+        const double band_top = std::min(88.0, h * .19), band = h - band_top - 12;
         line_gap = std::clamp(((band / 2 - 12) / field_scale - 45) / (kLineMiddle * 30), .6, 1.0);
         RectangleGeometry clip;clip.Rect({0,0,static_cast<float>(w),static_cast<float>(h)});stage.Clip(clip);
         field_width = w;
         field_x = w / 2;
         field_y = band_top + band / 2;
+        // The not-connected card shares the stage's cell: centre it on the waves, not the cell.
+        get<FrameworkElement>(L"OfflineCard").Margin(ThicknessHelper::FromLengths(24, 24 + 2 * std::max(0.0, field_y - h / 2), 24, 24));
         wave_frame.fade = static_cast<float>(std::min(48.0, h * .1));
         const double s = field_scale;
         const size_t points = static_cast<size_t>((w+2*dusk::WaveFrame::padding) / kFieldStep) + 2;
@@ -759,7 +784,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 // Blend between neighbouring bands, so the line stays smooth where they meet.
                 const double position = std::clamp(x / field_width * dusk::kBands - .5, 0.0, dusk::kBands - 1.001);
                 const size_t band = static_cast<size_t>(position);
-                const double stir = (pulse[band] + (pulse[band + 1] - pulse[band]) * ease(position - band));
+                const double stir = wave_gain() * (pulse[band] + (pulse[band + 1] - pulse[band]) * ease(position - band));
                 // A slow drift that never stops, even in silence, plus a faster swell the music drives.
                 // Ambient's lines are already waves of about the swell's length, and the two would
                 // cancel each other out as the swell travels, flattening the line every few seconds.
@@ -1226,7 +1251,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         Automation::AutomationProperties::SetName(control, name);
         return control;
     }
-    FrameworkElement make_choice(std::wstring const& name, std::vector<std::wstring> const& options, size_t selected) {
+    FrameworkElement make_choice(std::wstring const& name, std::vector<std::wstring> const& options, size_t selected, std::function<void(size_t)> chosen = {}) {
         Border frame;
         frame.Padding(ThicknessHelper::FromUniformLength(2));
         frame.CornerRadius(CornerRadiusHelper::FromUniformRadius(7));
@@ -1242,7 +1267,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             key.FontSize(13);
             key.IsChecked(i == selected);
             Automation::AutomationProperties::SetName(key, name + L": " + options[i]);
-            key.Click([group, i](auto&&, auto&&) { for (size_t k = 0; k < group->size(); ++k) (*group)[k].IsChecked(k == i); });
+            key.Click([group, i, chosen](auto&&, auto&&) { for (size_t k = 0; k < group->size(); ++k) (*group)[k].IsChecked(k == i); if (chosen) chosen(i); });
             group->push_back(key);
             keys.Children().Append(key);
         }
@@ -1308,6 +1333,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         panel.Width(420);
         fill(panel);
         flyout.Content(panel);
+        flyout.Closed([this](auto&&, auto&&) { request_wave_preview(false); }); // the Wave preview never outlives its row
         get<Button>(button).Flyout(flyout);
     }
     std::array<StackPanel, 4> setting_groups{nullptr, nullptr, nullptr, nullptr};
@@ -1574,10 +1600,27 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     }
     void build_app_flyouts() {
         attach_flyout(L"AppButton", [this](StackPanel const& panel) {
+            // Wave (0.8.0) first (0.8.2): the panel opens upward from its button, so the pointer reaches
+            // the other rows before it passes over this one. Resting on it shows the main screen's waves.
+            auto wave = make_choice(L"Wave", {L"Calm", L"Balanced", L"Lively"}, static_cast<size_t>(render_review ? 1 : earbud::updates::load_settings().wave),
+                [this](size_t chosen) { wave_response = static_cast<int>(chosen); auto s = earbud::updates::load_settings(); s.wave = wave_response; earbud::updates::save_settings(s); wake(); });
+            auto over = std::make_shared<bool>(false);
+            wave.PointerEntered([this, over](auto&&, auto&&) { *over = true; request_wave_preview(true); });
+            wave.PointerExited([this, over](auto&&, auto&&) { *over = false; request_wave_preview(false); });
+            wave.PointerCanceled([this, over](auto&&, auto&&) { *over = false; request_wave_preview(false); });
+            wave.GotFocus([this](auto&&, RoutedEventArgs const& args) { if (auto c = args.OriginalSource().try_as<Control>(); c && c.FocusState() == FocusState::Keyboard) request_wave_preview(true, true); });
+            wave.LostFocus([this, over](auto&&, auto&&) { if (!*over) request_wave_preview(false); });
+            add_row(panel, L"Wave", L"How much the lines on the main screen move with your music. They also learn what you usually play, so any kind of music moves them.", wave);
             add_row(panel, L"Widget", L"Shows your six main-screen EQs. Add it from Win + W.", make_value(L"WF-C710N"));
             auto updates = make_switch(L"Check for updates", earbud::updates::load_settings().check);
             updates.Toggled([updates](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.check = updates.IsOn(); earbud::updates::save_settings(s); });
-            add_row(panel, L"Check for updates", L"Once a day, from this project's GitHub releases. Nothing about you is sent.", updates);
+            // Check now (0.8.0): looks straight away, whatever the daily switch says, and answers in its own label.
+            auto check_now = make_action(L"Check now");
+            Automation::AutomationProperties::SetName(check_now, L"Check for an update now");
+            check_now.Click([this, check_now](auto&&, auto&&) { check_for_update(true, check_now); });
+            StackPanel update_controls; update_controls.Orientation(Orientation::Horizontal); update_controls.Spacing(12);
+            update_controls.Children().Append(check_now); update_controls.Children().Append(updates);
+            add_row(panel, L"Check for updates", L"Once a day, from this project's GitHub releases, or now with Check now. Nothing about you is sent.", update_controls);
             auto tray = make_switch(L"Keep running in the tray", earbud::updates::load_settings().tray);
             tray.Toggled([this, tray](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.tray = tray.IsOn(); earbud::updates::save_settings(s); if (s.tray) add_tray(); else remove_tray(); });
             add_row(panel, L"Keep running in the tray", L"Closing the window keeps Sound Connect in the notification area. Quit from its menu there.", tray);
@@ -1601,12 +1644,21 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         auto body = get<FrameworkElement>(L"SettingsBody");
         const double w = body.ActualWidth();
         if (w <= 0 || page != L"Settings") return;
-        const bool wide = w >= 1060;
+        // The earbud art fits the space between the columns (0.8.3). It was a fixed 2 x 200 DIPs, which
+        // ran under both columns between about 1060 and 1300 DIPs wide. The columns first narrow
+        // from 370 to 330, then the art shrinks; below 110 DIPs an earbud is too small to read, and
+        // the page drops the art and its lines for two plain columns.
+        constexpr double kArtSpacing = 30, kBudMax = 200, kBudMin = 110, kColumnMax = 370, kColumnMin = 330;
+        const double column = std::clamp((w - (2 * kBudMax + kArtSpacing)) / 2, kColumnMin, kColumnMax);
+        const double bud = std::min(kBudMax, (w - 2 * column - kArtSpacing) / 2);
+        const bool wide = bud >= kBudMin;
         const auto star = GridLengthHelper::FromValueAndType(1, GridUnitType::Star);
-        get<ColumnDefinition>(L"SettingsLeftColumn").Width(wide ? GridLengthHelper::FromPixels(370) : star);
-        get<ColumnDefinition>(L"SettingsRightColumn").Width(wide ? GridLengthHelper::FromPixels(370) : star);
+        get<ColumnDefinition>(L"SettingsLeftColumn").Width(wide ? GridLengthHelper::FromPixels(column) : star);
+        get<ColumnDefinition>(L"SettingsRightColumn").Width(wide ? GridLengthHelper::FromPixels(column) : star);
         get<ColumnDefinition>(L"SettingsMiddleColumn").Width(wide ? star : GridLengthHelper::FromPixels(32));
         show(L"SettingsBuds", wide);
+        if (wide) for (auto name : {L"SettingsBudLeft", L"SettingsBudRight"}) { auto art = get<FrameworkElement>(name); art.Width(bud); art.Height(bud * .92); }
+        if (wide) get<FrameworkElement>(L"SettingsBuds").UpdateLayout(); // the lines below are drawn from the art's new size
         auto lines = get<Canvas>(L"SettingsLines");
         lines.Children().Clear();
         if (!wide || high_contrast) return;
@@ -1981,6 +2033,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         library_changed();
     }
     void open_drawer() {
+        if (!controls_live && !render_review) return; // locked while disconnected (0.8.0)
         if(root.XamlRoot())drawer_focus=Input::FocusManager::GetFocusedElement(root.XamlRoot()).try_as<Control>();
         drawer_open = true;apply_light();
         get<UIElement>(L"MainPage").IsHitTestVisible(false);get<UIElement>(L"EqPage").IsHitTestVisible(false);
@@ -2017,7 +2070,78 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // ---------- Wiring ----------
     void click(const wchar_t* name, std::function<void()> action) { get<Button>(name).Click([action](auto&&, auto&&) { action(); }); }
     void note(std::wstring const& text) { get<TextBlock>(L"EqNote").Text(text); }
+    // ---------- Wave preview (0.8.0, reworked in 0.8.1) ----------
+    // While the Wave choice in Settings is hovered or has keyboard focus, Settings fades away and the
+    // main screen shows exactly as you'd see it, moving with your music at the chosen setting; the
+    // choice's flyout stays on top. Only while music plays on connected earbuds: without them there
+    // is nothing to see. It ends by itself if either stops (tick()).
+    // 0.8.2: only the waves show (not the EQ tiles), and the change goes through black in two steps,
+    // Settings out then waves in, and back, so the two are never on screen together. The preview
+    // starts after resting on the choice for half a second, so passing over it does nothing.
+    bool wave_preview = false, preview_shown = false; // shown: the main screen is up (or fading)
+    Dispatching::DispatcherQueueTimer preview_timer{nullptr}; // kept: a local timer can be released before it fires (0.8.0 left the preview stuck)
+    Dispatching::DispatcherQueueTimer preview_dwell{nullptr};
+    std::function<void()> preview_next; // the second half of the change, run by preview_timer
+    std::vector<std::pair<FrameworkElement, double>> preview_hidden; // the main screen's controls, and their own opacity
+    bool stage_on() const { return page == L"Main" || wave_preview; }
+    bool preview_possible() const { return page == L"Settings" && !high_contrast && music_playing && controls_live; }
+    static constexpr int kPreviewOut = 150, kPreviewIn = 250;
+    void preview_after(int ms, std::function<void()> next) {
+        if (!preview_timer) {
+            preview_timer = Dispatching::DispatcherQueue::GetForCurrentThread().CreateTimer(); preview_timer.IsRepeating(false);
+            preview_timer.Tick([this](auto&&, auto&&) { if (auto next = std::move(preview_next)) { preview_next = nullptr; next(); } });
+        }
+        preview_timer.Stop(); preview_next = std::move(next); preview_timer.Interval(std::chrono::milliseconds(ms)); preview_timer.Start();
+    }
+    // Hovering asks for the preview after a short rest; keyboard focus asks at once.
+    void request_wave_preview(bool on, bool at_once = false) {
+        if (!preview_dwell) {
+            preview_dwell = Dispatching::DispatcherQueue::GetForCurrentThread().CreateTimer(); preview_dwell.IsRepeating(false); preview_dwell.Interval(std::chrono::milliseconds(500));
+            preview_dwell.Tick([this](auto&&, auto&&) { set_wave_preview(true); });
+        }
+        preview_dwell.Stop();
+        if (on && !at_once) preview_dwell.Start(); else set_wave_preview(on);
+    }
+    void set_wave_preview(bool on) {
+        if (on && !preview_possible()) return;
+        if (on == wave_preview) return;
+        wave_preview = on;
+        auto wave = get<UIElement>(L"WaveChain");
+        if (on) {
+            fade(get<UIElement>(L"SettingsPage"), 0, kPreviewOut);
+            preview_after(kPreviewOut, [this, wave] {
+                if (!wave_preview) return;
+                if (!preview_shown) {
+                    preview_shown = true;
+                    for (auto const& child : get<Grid>(L"MainPage").Children())
+                        if (auto element = child.try_as<FrameworkElement>(); element && element.Name() != L"Stage" && element.Name() != L"WaveChain") { preview_hidden.emplace_back(element, element.Opacity()); element.Opacity(0); }
+                    get<UIElement>(L"MainPage").IsHitTestVisible(false); show(L"MainPage", true); root.UpdateLayout(); draw_field(); layout_light(); apply_light(); wake();
+                }
+                fade(wave, 1, kPreviewIn, 0);
+            });
+        } else {
+            fade(wave, 0, kPreviewOut);
+            preview_after(kPreviewOut, [this] { if (!wave_preview) { end_preview_now(false); fade(get<UIElement>(L"SettingsPage"), 1, kPreviewIn); } });
+        }
+    }
+    // Puts the main screen away at once (also when leaving Settings). Only undoes what the preview changed.
+    void end_preview_now(bool settings_now = true) {
+        if (preview_timer) preview_timer.Stop();
+        if (preview_dwell) preview_dwell.Stop();
+        preview_next = nullptr; wave_preview = false;
+        if (preview_shown) {
+            preview_shown = false;
+            for (auto& [element, opacity] : preview_hidden) element.Opacity(opacity);
+            preview_hidden.clear();
+            // The connection may have changed meanwhile: the controls rest exactly as it says.
+            for (auto name : {L"NoiseHost", L"Bank", L"AllButton"}) get<FrameworkElement>(name).Opacity(controls_live ? 1 : .4);
+            get<UIElement>(L"MainPage").IsHitTestVisible(true); show(L"MainPage", page == L"Main");
+        }
+        fade(get<UIElement>(L"WaveChain"), 1, 0);
+        if (settings_now) fade(get<UIElement>(L"SettingsPage"), 1, 0);
+    }
     void navigate(std::wstring const& target_page) {
+        if (target_page != L"Settings") end_preview_now();
         page = target_page;
         apply_light();
         show(L"MainPage", page == L"Main");
@@ -2035,6 +2159,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (page == L"Main" && timer && animations) wake();
     }
     void open_editor() {
+        if (!controls_live && !render_review) return; // locked while disconnected (0.8.0)
         model.editing = true; opened = model; history.clear(); last_kind = -1; comparing = false;
         compare_curve = model.current().saved;
         if (!guide) restore_editor(false); // whatever happened before, the editor opens editable
@@ -2337,8 +2462,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             send_command(L"keep", static_cast<int>(k + 1), c);
         }
     }
-    // Sound modes and the six EQs act on the earbuds, so they rest while there's no connection;
-    // the library and editor stay open, since EQs are kept on this PC. The waves settle too.
+    // Sound modes, the six EQs, the library and the editor all rest while there's no connection
+    // (the library too since 0.8.0, owner's call: while disconnected, Sony's phone app can change
+    // the earbuds, so editing here would drift from what they hold). The waves settle too.
     bool controls_live = true, card_shown = false;
     // explain: show the card. Not while a connection attempt is under way, so a normal connect
     // never flashes it.
@@ -2349,11 +2475,16 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             // the window is live, when fade() sets a different property from the one it animates
             // later, which left the controls dimmed. Nor an OpacityTransition: their children move
             // through the compositor, and WinUI crashed with both on the same subtree (0.5.5).
-            for (auto name : {L"NoiseHost", L"Bank"}) {
+            for (auto name : {L"NoiseHost", L"Bank", L"AllButton"}) {
                 auto element = get<FrameworkElement>(name);
                 element.IsHitTestVisible(on); element.Opacity(on ? 1 : .4);
             }
-            for (auto key : {L"NoiseCancelling", L"NoiseAmbient", L"NoiseOff"}) get<Control>(key).IsTabStop(on);
+            for (auto key : {L"NoiseCancelling", L"NoiseAmbient", L"NoiseOff", L"AllButton"}) get<Control>(key).IsTabStop(on);
+            // Anything open when the connection drops closes: the library, Find your EQ and the editor.
+            if (!on && live) {
+                if (drawer_open) close_drawer();
+                if (page == L"Eq") leave_editor();
+            }
             if (on) wake();
         }
         // The card over the stage says why and offers a way back, as Tribit Connect does.
@@ -2471,25 +2602,35 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
 
     // ---------- Updates ----------
     std::optional<earbud::updates::Release> available;
-    fire_and_forget check_for_update() {
+    // force: Check now in Settings, which skips the daily limit and the switch and reports in `status`.
+    fire_and_forget check_for_update(bool force = false, Button status = nullptr) {
         auto lifetime = get_strong();
         const auto current = earbud::updates::parse_version(app_version());
         auto settings = earbud::updates::load_settings();
-        if (render_review || !current || !settings.check || earbud::updates::now_seconds() - settings.last_check < 24 * 3600) co_return;
+        auto say = [status](std::wstring const& text, bool enabled) { if (status) { status.Content(box_value(text)); status.IsEnabled(enabled); } };
+        if (render_review) co_return;
+        if (!current) { say(L"Development build", true); co_return; } // unpackaged builds have no version to compare
+        if (!force && (!settings.check || earbud::updates::now_seconds() - settings.last_check < 24 * 3600)) co_return;
         settings.last_check = earbud::updates::now_seconds();
         earbud::updates::save_settings(settings);
+        say(L"Checking…", false);
         auto ui = Dispatching::DispatcherQueue::GetForCurrentThread();
-        try {
-            auto body = co_await earbud::updates::latest_json();
-            auto release = earbud::updates::newer_release(body, *current);
-            ui.TryEnqueue([this, release] {
-                if (!release) return;
-                available = release;
-                auto button = get<Button>(L"UpdateButton");
-                button.Content(box_value(L"Update to " + release->version));
-                button.Visibility(Visibility::Visible);
-            });
-        } catch (...) {} // offline or rate-limited: try again tomorrow
+        const auto started = GetTickCount64();
+        std::optional<earbud::updates::Release> release; bool failed = false;
+        try { release = earbud::updates::newer_release(co_await earbud::updates::latest_json(), *current); } catch (...) { failed = true; } // offline or rate-limited
+        // Long enough to read "Checking…", so a second check visibly happens.
+        if (status && GetTickCount64() - started < 700) co_await winrt::resume_after(std::chrono::milliseconds(700 - (GetTickCount64() - started)));
+        ui.TryEnqueue([this, release, failed, say] {
+            if (failed) { say(L"Couldn't check. Try again", true); return; }
+            if (!release) { say(L"Up to date", true); return; }
+            available = release;
+            auto button = get<Button>(L"UpdateButton");
+            button.Content(box_value(L"Update to " + release->version));
+            button.Visibility(Visibility::Visible);
+            say(std::wstring(release->version) + L" is available", true);
+        });
+        // Then the button goes back to "Check now", ready for another look.
+        if (status) { co_await winrt::resume_after(std::chrono::seconds(4)); ui.TryEnqueue([status] { if (status.IsEnabled()) status.Content(box_value(L"Check now")); }); }
     }
     fire_and_forget install_update() {
         auto lifetime = get_strong();
@@ -2523,6 +2664,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             if(review_view==L"GuideReview")guide->next();
             sync_guide(0);}
         // The 0.7.1 bug: New > Find your EQ, Cancel, then open an EQ. It must open editable.
+        // Disconnected: the card centred on the waves; sound modes, the six EQs and All N dimmed.
+        if (review_view == L"Offline") { last_seen = static_cast<int64_t>(std::time(nullptr)); set_controls_live(false, true); get<TextBlock>(L"TitleState").Text(L"Not connected"); }
         // Music stops during the guide: paused, choices dimmed and locked (review_silent is set for it).
         if (review_view == L"GuidePaused") { open_editor(); enter_guide(); guide->choose(2); sync_guide(0); guide_silence_ms = 1000; guide_paused = true; apply_guide_pause(); }
         if (review_view == L"GuideCancelled") { start_guide_from_home(); finish_guide(false); model.select(1); open_editor(); }
@@ -2667,6 +2810,16 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 navigate(L"Settings");root.UpdateLayout();layout_settings();
                 for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                 capture_window(folder/L"readme-settings.bmp");
+                // 0.8.0 review: the App and widget rows (Check now, Wave), then the Wave preview.
+                {auto app=get<Button>(L"AppButton");app.Flyout().ShowAt(app);
+                 for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                 capture_window(folder/L"review-settings-app.bmp");
+                 set_wave_preview(true);
+                 for(int i=0;i<60;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                 capture_window(folder/L"review-wave-preview.bmp");
+                 app.Flyout().Hide();set_wave_preview(false);
+                 for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                 capture_window(folder/L"review-after-preview.bmp");} // 0.8.0's preview stayed stuck here
                 animations=false;demo_music=false;navigate(L"Main");
             }
             if(stage_bench){
@@ -2799,6 +2952,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command, int) {
     if (review_pass.empty() || review_pass.find_first_not_of(L"abcdefghijklmnopqrstuvwxyz0123456789-") != std::wstring::npos) return 2;
     if(render_review&&args.find(L"--max-review")!=std::wstring::npos){RECT area{};SystemParametersInfoW(SPI_GETWORKAREA,0,&area,0);double dpi=GetDpiForSystem()/96.0;initial_width=static_cast<int>((area.right-area.left)/dpi);initial_height=static_cast<int>((area.bottom-area.top)/dpi);}
     if (args.find(L"--compact") != std::wstring::npos) { initial_width = 960; initial_height = 620; }
+    // Review only: --width=N renders at that many DIPs wide (Settings layout checks, 0.8.3).
+    if (render_review) if (const auto width = option(L"--width=", L""); !width.empty()) initial_width = std::clamp(_wtoi(width.c_str()), 640, 3000);
     bool bootstrapped = false;
     int result = 0;
     try {

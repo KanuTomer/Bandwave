@@ -12,9 +12,12 @@
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Web.Http.h>
 #include <winrt/Windows.Web.Http.Headers.h>
+#include <winrt/Windows.Web.Http.Filters.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -25,24 +28,50 @@ namespace earbud::updates {
 inline constexpr wchar_t kLatest[] = L"https://api.github.com/repos/KanuTomer/Sound-Connect/releases/latest";
 inline constexpr wchar_t kThumbprint[] = L"458DC5875423917D74F77A536EBBB42720D1B67A";
 
-// The app's own preferences share this file: update checks and closing to the tray.
-struct Settings { bool check = true; int64_t last_check = 0; bool tray = true; };
+// The app's own preferences share this file: update checks, closing to the tray, how lively the
+// wave is, and the learned music profile (0.8.0: 7 usual levels and 7 spreads, nothing else).
+struct Settings {
+    bool check = true; int64_t last_check = 0; bool tray = true;
+    int wave = 1; // 0 Calm, 1 Balanced, 2 Lively
+    std::optional<std::array<std::array<double, 7>, 2>> profile; // {mean, spread}, once learned
+};
 inline std::filesystem::path settings_path() { return data_folder() / L"app-settings.json"; }
+inline json::JsonObject settings_json() {
+    json::JsonObject root{nullptr};
+    if (!json::JsonObject::TryParse(winrt::hstring(read_text(settings_path(), 65536)), root)) root = json::JsonObject();
+    return root;
+}
 inline Settings load_settings() {
     Settings s;
-    json::JsonObject root{nullptr};
-    if (json::JsonObject::TryParse(winrt::hstring(read_text(settings_path(), 65536)), root)) {
-        s.check = root.GetNamedBoolean(L"check_updates", true);
-        s.last_check = static_cast<int64_t>(root.GetNamedNumber(L"last_update_check", 0));
-        s.tray = root.GetNamedBoolean(L"close_to_tray", true);
+    auto root = settings_json();
+    s.check = root.GetNamedBoolean(L"check_updates", true);
+    s.last_check = static_cast<int64_t>(root.GetNamedNumber(L"last_update_check", 0));
+    s.tray = root.GetNamedBoolean(L"close_to_tray", true);
+    s.wave = std::clamp(static_cast<int>(root.GetNamedNumber(L"wave_response", 1)), 0, 2);
+    auto mean = root.GetNamedArray(L"music_mean", json::JsonArray()), spread = root.GetNamedArray(L"music_spread", json::JsonArray());
+    if (mean.Size() == 7 && spread.Size() == 7) {
+        std::array<std::array<double, 7>, 2> p{};
+        bool ok = true;
+        for (uint32_t i = 0; i < 7; ++i) {
+            if (mean.GetAt(i).ValueType() != json::JsonValueType::Number || spread.GetAt(i).ValueType() != json::JsonValueType::Number) { ok = false; break; }
+            p[0][i] = std::clamp(mean.GetNumberAt(i), 0.0, 1.0); p[1][i] = std::clamp(spread.GetNumberAt(i), 0.0, 1.0);
+        }
+        if (ok) s.profile = p;
     }
     return s;
 }
+// Rewrites only the keys it owns, so anything else in the file survives.
 inline void save_settings(Settings const& s) {
-    json::JsonObject root;
+    auto root = settings_json();
     root.SetNamedValue(L"check_updates", json::JsonValue::CreateBooleanValue(s.check));
     root.SetNamedValue(L"last_update_check", json::JsonValue::CreateNumberValue(static_cast<double>(s.last_check)));
     root.SetNamedValue(L"close_to_tray", json::JsonValue::CreateBooleanValue(s.tray));
+    root.SetNamedValue(L"wave_response", json::JsonValue::CreateNumberValue(s.wave));
+    if (s.profile) {
+        json::JsonArray mean, spread;
+        for (size_t i = 0; i < 7; ++i) { mean.Append(json::JsonValue::CreateNumberValue(std::round((*s.profile)[0][i] * 1e4) / 1e4)); spread.Append(json::JsonValue::CreateNumberValue(std::round((*s.profile)[1][i] * 1e4) / 1e4)); }
+        root.SetNamedValue(L"music_mean", mean); root.SetNamedValue(L"music_spread", spread);
+    }
     write_atomic(settings_path(), root.Stringify());
 }
 inline int64_t now_seconds() { return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count(); }
@@ -65,7 +94,10 @@ struct Release { std::wstring version, setup_url, sha_url; };
 
 // The newest release, if it is newer than `current` and carries a setup and its checksum.
 inline winrt::Windows::Foundation::IAsyncOperation<winrt::hstring> latest_json() {
-    winrt::Windows::Web::Http::HttpClient client;
+    // Always ask GitHub: Windows' HTTP cache otherwise answers a second Check now from the first reply.
+    winrt::Windows::Web::Http::Filters::HttpBaseProtocolFilter filter;
+    filter.CacheControl().ReadBehavior(winrt::Windows::Web::Http::Filters::HttpCacheReadBehavior::NoCache);
+    winrt::Windows::Web::Http::HttpClient client{filter};
     client.DefaultRequestHeaders().UserAgent().ParseAdd(L"EarbudControls");
     client.DefaultRequestHeaders().Accept().ParseAdd(L"application/vnd.github+json");
     co_return co_await client.GetStringAsync(winrt::Windows::Foundation::Uri(kLatest));
