@@ -10,12 +10,12 @@ $taskPackage=(Resolve-Path -LiteralPath $PackagePath).Path
 $taskBundle=Split-Path $taskPackage -Parent
 if(Test-Path -LiteralPath (Join-Path $taskBundle 'SHA256SUMS.txt')){Assert-BundleIntegrity $taskBundle}
 $taskIdentity=Get-MsixIdentity $taskPackage
-if($taskIdentity.Name -ne 'Kanu.EarbudControls' -or $taskIdentity.Publisher -ne 'CN=EarbudControls.Local' -or $taskIdentity.ProcessorArchitecture -ne 'x64'){throw 'Unexpected production package identity.'}
+if($taskIdentity.Name -ne 'KanuTomer.Bandwave' -or $taskIdentity.Publisher -ne 'CN=C7E2D079-3748-4D25-83B1-3A84650F94BD' -or $taskIdentity.ProcessorArchitecture -ne 'x64'){throw 'Unexpected production package identity.'}
 if($Version -and $Version -ne $taskIdentity.Version){throw 'Requested version differs from package version.'}
 if([IO.Path]::GetFileName($taskPackage) -ne "EarbudControls_$($taskIdentity.Version).msix"){throw 'Package filename and manifest version differ.'}
 $taskCertPath=Join-Path $taskBundle 'EarbudControls.Local.cer'
 $taskCertificate=[Security.Cryptography.X509Certificates.X509Certificate2]::new($taskCertPath)
-if($taskCertificate.Thumbprint -ne '458DC5875423917D74F77A536EBBB42720D1B67A' -or $taskCertificate.Subject -ne $taskIdentity.Publisher){throw 'Unexpected package certificate.'}
+if($taskCertificate.Thumbprint -ne '7BC58E5A7540AE042F493DD007EBAD46E305E050' -or $taskCertificate.Subject -ne $taskIdentity.Publisher){throw 'Unexpected package certificate.'}
 if($taskCertificate.NotAfter -le (Get-Date) -or $taskCertificate.NotBefore -gt (Get-Date)){throw 'The release signing certificate is outside its validity period.'}
 $taskSignature=Get-AuthenticodeSignature -LiteralPath $taskPackage
 if(-not $taskSignature.SignerCertificate -or $taskSignature.SignerCertificate.Thumbprint -ne $taskCertificate.Thumbprint -or [string]$taskSignature.Status -in @('NotSigned','HashMismatch','NotSupportedFileFormat')){throw 'Package signature is missing, damaged, or signed by another certificate.'}
@@ -44,8 +44,8 @@ if(-not $taskTrusted){
 }
 if((Get-AuthenticodeSignature -LiteralPath $taskPackage).Status -ne 'Valid'){throw 'Windows could not validate the trusted package signature.'}
 if($taskNeedsRuntime){Add-AppxPackage -Path $taskPackage -DependencyPath $taskDependency -ForceApplicationShutdown}else{Add-AppxPackage -Path $taskPackage -ForceApplicationShutdown}
-$taskInstalled=Get-AppxPackage -Name Kanu.EarbudControls
+$taskInstalled=Get-AppxPackage -Name KanuTomer.Bandwave
 if(-not $taskInstalled -or [version]$taskInstalled.Version -ne [version]$taskIdentity.Version){throw 'Installed version could not be confirmed.'}
-Write-Output "Installed Sound Connect $($taskInstalled.Version). Open Win + W, select Add widgets, and add WF-C710N."
-Write-Output 'Open Sound Connect from Start for the companion controls. Pairing and widget placement are manual.'
+Write-Output "Installed Bandwave $($taskInstalled.Version). Open Win + W, select Add widgets, and add WF-C710N."
+Write-Output 'Open Bandwave from Start for the companion controls. Pairing and widget placement are manual.'
 Write-Output 'If the picker is stale after enabling Developer Mode, close Win + W and reopen it. A Windows sign-out or restart may be needed.'

@@ -60,8 +60,8 @@ $taskPri=Join-Path $taskRoot 'out\priconfig.xml'
 if($LASTEXITCODE -ne 0){throw 'makepri createconfig failed.'}
 & (Join-Path $taskSdk 'makepri.exe') new /pr $taskStage /cf $taskPri /mn (Join-Path $taskStage 'AppxManifest.xml') /of (Join-Path $taskStage 'resources.pri') /o | Out-Null
 if($LASTEXITCODE -ne 0){throw 'makepri new failed.'}
-$taskCert=Get-ChildItem Cert:\CurrentUser\My | Where-Object {$_.Subject -eq 'CN=EarbudControls.Local' -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(7)} | Sort-Object NotAfter -Descending | Select-Object -First 1
-if(-not $taskCert){$taskCert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=EarbudControls.Local' -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddYears(1)}
+$taskCert=Get-ChildItem Cert:\CurrentUser\My | Where-Object {$_.Subject -eq 'CN=C7E2D079-3748-4D25-83B1-3A84650F94BD' -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(7)} | Sort-Object NotAfter -Descending | Select-Object -First 1
+if(-not $taskCert){$taskCert=New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=C7E2D079-3748-4D25-83B1-3A84650F94BD' -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable -NotAfter (Get-Date).AddYears(1)}
 $taskOut=Join-Path $taskRoot 'out'
 $taskPackage=Join-Path $taskOut "EarbudControls_$Version.msix"
 & (Join-Path $taskSdk 'makeappx.exe') pack /d $taskStage /p $taskPackage /o
