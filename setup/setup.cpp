@@ -1,11 +1,11 @@
-// EarbudControls-Setup.exe: one file that installs, updates and uninstalls Sound Connect.
+// EarbudControls-Setup.exe: one file that installs, updates and uninstalls Bandwave.
 //
 // It carries the signed MSIX (app + widget), the Microsoft Windows App Runtime it depends on, and
 // the public certificate the package is signed with, each checked against a SHA-256 fixed at build
 // time. Install and update use Windows' own package manager, so an update keeps the same package
 // identity and everything the listener saved. Administrator rights are asked for once, only to
-// trust the certificate. Setup registers its own "Sound Connect" entry in Installed apps, whose
-// uninstall asks before removing the EQs and settings in %LOCALAPPDATA%\Sound Connect.
+// trust the certificate. Setup registers its own "Bandwave" entry in Installed apps, whose
+// uninstall asks before removing the EQs and settings in %LOCALAPPDATA%\Earbud Controls.
 //
 //   EarbudControls-Setup.exe            install, or update in place
 //   EarbudControls-Setup.exe /update    the app's updater: only a progress window, unless something fails
@@ -35,10 +35,14 @@ namespace fs = std::filesystem;
 using namespace winrt;
 using namespace winrt::Windows::Management::Deployment;
 
-static constexpr wchar_t kTitle[] = L"Sound Connect";
-static constexpr wchar_t kPackageName[] = L"Kanu.EarbudControls";
-static constexpr wchar_t kPublisher[] = L"CN=EarbudControls.Local";
-static constexpr wchar_t kThumbprint[] = L"458DC5875423917D74F77A536EBBB42720D1B67A";
+static constexpr wchar_t kTitle[] = L"Bandwave";
+static constexpr wchar_t kPackageName[] = L"KanuTomer.Bandwave";
+static constexpr wchar_t kPublisher[] = L"CN=C7E2D079-3748-4D25-83B1-3A84650F94BD";
+// Before 0.9.0 the app was "Sound Connect", with its own identity. Setup removes that package
+// before installing Bandwave; both keep EQs and settings in %LOCALAPPDATA%\Earbud Controls.
+static constexpr wchar_t kOldPackageName[] = L"Kanu.EarbudControls";
+static constexpr wchar_t kOldPublisher[] = L"CN=EarbudControls.Local";
+static constexpr wchar_t kThumbprint[] = L"7BC58E5A7540AE042F493DD007EBAD46E305E050";
 static constexpr wchar_t kRuntimeFamily[] = L"Microsoft.WindowsAppRuntime.2_8wekyb3d8bbwe";
 static constexpr wchar_t kUninstallKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\EarbudControls";
 static bool quiet = false;
@@ -191,7 +195,7 @@ static void register_entry(fs::path const& setup, uintmax_t bytes) {
     if (RegCreateKeyExW(HKEY_CURRENT_USER, kUninstallKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) return;
     set_string(key, L"DisplayName", kTitle);
     set_string(key, L"DisplayVersion", kVersion);
-    set_string(key, L"Publisher", L"Sound Connect (independent)");
+    set_string(key, L"Publisher", L"Kanu Tomer");
     set_string(key, L"DisplayIcon", setup.wstring() + L",0");
     set_string(key, L"InstallLocation", setup.parent_path().wstring());
     set_string(key, L"UninstallString", L"\"" + setup.wstring() + L"\" /uninstall");
@@ -217,16 +221,17 @@ static int install() {
     if (!developer_mode()) problems += L"• Turn on Developer Mode in Settings > System > For developers. Windows only shows widgets from apps outside the Store when it's on.\n";
     if (!widgets_available(manager)) problems += L"• Install or update Windows Web Experience Pack from the Microsoft Store, for Widgets.\n";
     if (!problems.empty()) {
-        if (ask(L"Sound Connect can't be installed yet", problems + L"\nOpen the For developers settings now?", TDCBF_YES_BUTTON | TDCBF_NO_BUTTON, TD_WARNING_ICON) == IDYES)
+        if (ask(L"Bandwave can't be installed yet", problems + L"\nOpen the For developers settings now?", TDCBF_YES_BUTTON | TDCBF_NO_BUTTON, TD_WARNING_ICON) == IDYES)
             ShellExecuteW(nullptr, L"open", L"ms-settings:developers", nullptr, nullptr, SW_SHOWNORMAL);
         return 1;
     }
     auto existing = installed(manager, kPackageName, kPublisher);
+    auto old = installed(manager, kOldPackageName, kOldPublisher);
     if (existing) {
         auto v = existing->Id().Version();
         const std::wstring current = std::to_wstring(v.Major) + L"." + std::to_wstring(v.Minor) + L"." + std::to_wstring(v.Build);
         if (!quiet && current == kVersion) {
-            if (ask(L"Sound Connect " + current + L" is already installed", L"Install it again? Your EQs and settings stay as they are.", TDCBF_YES_BUTTON | TDCBF_NO_BUTTON) != IDYES) return 0;
+            if (ask(L"Bandwave " + current + L" is already installed", L"Install it again? Your EQs and settings stay as they are.", TDCBF_YES_BUTTON | TDCBF_NO_BUTTON) != IDYES) return 0;
         }
     }
     const auto temp = fs::temp_directory_path() / (L"EarbudControlsSetup-" + std::to_wstring(GetCurrentProcessId()));
@@ -235,18 +240,24 @@ static int install() {
     const auto app = unpack(temp, IDR_APP, kAppSha256, L"EarbudControls.msix");
     const auto cert = unpack(temp, IDR_CERT, kCertSha256, L"EarbudControls.Local.cer");
     if (!certificate_trusted()) {
-        if (!quiet && ask(L"Allow Sound Connect' certificate", L"This free release is signed with its own certificate. Windows asks for administrator permission once, only to trust it. Nothing else runs as administrator.", TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON) != IDOK) return 1;
-        if (!elevate_trust(cert)) { fail(L"The certificate wasn't trusted", L"Sound Connect was not installed. Run setup again and choose Yes at the administrator prompt."); return 1; }
+        if (!quiet && ask(L"Allow Bandwave's certificate", L"This release is signed with its own certificate. Windows asks for administrator permission once, only to trust it. Nothing else runs as administrator.", TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON) != IDOK) return 1;
+        if (!elevate_trust(cert)) { fail(L"The certificate wasn't trusted", L"Bandwave was not installed. Run setup again and choose Yes at the administrator prompt."); return 1; }
     }
     auto dependencies = single_threaded_vector<Windows::Foundation::Uri>();
     if (!runtime_ready(manager)) dependencies.Append(Windows::Foundation::Uri(unpack(temp, IDR_RUNTIME, kRuntimeSha256, L"Microsoft.WindowsAppRuntime.2.msix").wstring()));
     // Same identity, newer version: Windows updates in place and keeps app data. The running app
     // and widget provider are closed for the moment it takes.
     DeploymentResult result{nullptr};
-    with_progress(existing ? L"Updating Sound Connect" : L"Installing Sound Connect",
-                  existing ? L"The app and widget close for a moment and the app reopens when it's done. Your EQs and settings are kept." : L"This takes a few seconds.",
-                  [&] { result = manager.AddPackageAsync(Windows::Foundation::Uri(app.wstring()), dependencies, DeploymentOptions::ForceApplicationShutdown).get(); });
-    if (!result || FAILED(result.ExtendedErrorCode())) { fail(L"Windows couldn't install Sound Connect", result ? std::wstring(result.ErrorText()) : std::wstring(L"The installation didn't finish.")); return 1; }
+    const bool updating = existing || old;
+    with_progress(updating ? L"Updating Bandwave" : L"Installing Bandwave",
+                  updating ? L"The app and widget close for a moment and the app reopens when it's done. Your EQs and settings are kept." : L"This takes a few seconds.",
+                  [&] {
+                      // Sound Connect becomes Bandwave: remove the old package first, so the two never
+                      // run side by side or both offer a widget. Its EQs and settings stay where they are.
+                      if (old) manager.RemovePackageAsync(old->Id().FullName()).get();
+                      result = manager.AddPackageAsync(Windows::Foundation::Uri(app.wstring()), dependencies, DeploymentOptions::ForceApplicationShutdown).get();
+                  });
+    if (!result || FAILED(result.ExtendedErrorCode())) { fail(L"Windows couldn't install Bandwave", result ? std::wstring(result.ErrorText()) : std::wstring(L"The installation didn't finish.")); return 1; }
     auto now = installed(manager, kPackageName, kPublisher);
     if (!now) { fail(L"Windows couldn't confirm the installation", L"Run setup again. If this keeps happening, restart Windows first."); return 1; }
 
@@ -259,8 +270,8 @@ static int install() {
     register_entry(kept, fs::file_size(app, ec) + fs::file_size(self, ec));
 
     if (quiet) { launch_app(*now); return 0; }
-    if (ask(existing ? L"Sound Connect is up to date" : L"Sound Connect is installed",
-            (existing ? std::wstring(L"Version ") + kVersion + L". Your EQs and settings were kept." : std::wstring(L"Add the widget from Win + W > Add widgets > WF-C710N.")) + L"\n\nOpen Sound Connect now?",
+    if (ask(existing ? L"Bandwave is up to date" : old ? L"Sound Connect is now Bandwave" : L"Bandwave is installed",
+            (existing || old ? std::wstring(L"Version ") + kVersion + L". Your EQs and settings were kept." : std::wstring(L"Add the widget from Win + W > Add widgets > WF-C710N.")) + L"\n\nOpen Bandwave now?",
             TDCBF_YES_BUTTON | TDCBF_NO_BUTTON) == IDYES) launch_app(*now);
     return 0;
 }
@@ -270,7 +281,7 @@ static int uninstall() {
     BOOL remove_data = FALSE;
     TASKDIALOGCONFIG config{sizeof(config)};
     config.pszWindowTitle = kTitle;
-    config.pszMainInstruction = L"Uninstall Sound Connect?";
+    config.pszMainInstruction = L"Uninstall Bandwave?";
     config.pszContent = L"The app and its widget are removed from this PC. Bluetooth pairing and the settings stored on your earbuds stay as they are.";
     config.pszVerificationText = L"Also remove my EQs and settings from this PC";
     config.dwCommonButtons = TDCBF_OK_BUTTON | TDCBF_CANCEL_BUTTON;
@@ -280,7 +291,7 @@ static int uninstall() {
     PackageManager manager;
     if (auto package = installed(manager, kPackageName, kPublisher)) {
         auto result = manager.RemovePackageAsync(package->Id().FullName()).get();
-        if (FAILED(result.ExtendedErrorCode())) { fail(L"Windows couldn't remove Sound Connect", std::wstring(result.ErrorText())); return 1; }
+        if (FAILED(result.ExtendedErrorCode())) { fail(L"Windows couldn't remove Bandwave", std::wstring(result.ErrorText())); return 1; }
     }
     RegDeleteTreeW(HKEY_CURRENT_USER, kUninstallKey);
     // This copy of setup is running from the data folder, so it is deleted once it has exited.
@@ -289,7 +300,7 @@ static int uninstall() {
     const std::wstring command = L"/c ping -n 3 127.0.0.1 >nul & rmdir /s /q \"" + target.wstring() + L"\"";
     wchar_t system[MAX_PATH]{}; GetSystemDirectoryW(system, MAX_PATH);
     ShellExecuteW(nullptr, L"open", (fs::path(system) / L"cmd.exe").c_str(), command.c_str(), nullptr, SW_HIDE);
-    ask(L"Sound Connect was removed", remove_data ? L"Your EQs and settings were removed too." : L"Your EQs and settings were kept, in case you install it again.");
+    ask(L"Bandwave was removed", remove_data ? L"Your EQs and settings were removed too." : L"Your EQs and settings were kept, in case you install it again.");
     return 0;
 }
 

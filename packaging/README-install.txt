@@ -11,7 +11,7 @@ This ZIP installs the same signed package with Install.cmd.
 3. Run Install.cmd. First installation requests administrator permission ONLY
    to trust the included public certificate. Cancelling leaves the app uninstalled.
 4. Pair/connect Sony WF-C710N manually in Windows Bluetooth settings.
-5. Open Win + W, choose Add widgets and add WF-C710N. Open Sound Connect
+5. Open Win + W, choose Add widgets and add WF-C710N. Open Bandwave
    from Start for companion controls. Pairing and widget placement are manual.
 
 If the picker is stale after enabling Developer Mode, close and reopen Win + W.
@@ -30,7 +30,7 @@ EQs and settings live in %LOCALAPPDATA%\Earbud Controls and are kept.
 The local signing certificate expires 17 October 2027; a replacement certificate
 will require a future trust update. No private signing key is included.
 
-UNINSTALL: Windows Settings > Apps > Installed apps > Sound Connect > Uninstall.
+UNINSTALL: Windows Settings > Apps > Installed apps > Bandwave > Uninstall.
 The setup exe's entry asks whether to remove your EQs and settings; the package
 entry from a ZIP install always keeps them in %LOCALAPPDATA%\Earbud Controls.
 This removes this app, not Bluetooth pairing, shared runtimes, or earbud settings.
@@ -39,7 +39,7 @@ To remove certificate trust too, an administrator can remove ONLY thumbprint
 Do not remove other certificates or Microsoft framework packages.
 
 WIDGET: Small shows batteries and the sound modes; Medium and Large add your six
-main-screen EQs. Sound Connect supports Sony WF-C710N only.
+main-screen EQs. Bandwave supports Sony WF-C710N only.
 
 Source, issues and releases: https://github.com/KanuTomer/Sound-Connect
 Independent project; not affiliated with Sony or Microsoft. See LICENSE and

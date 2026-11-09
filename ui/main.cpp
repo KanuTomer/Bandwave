@@ -318,7 +318,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             timer.Interval(std::chrono::milliseconds(33));
             timer.Tick([this](auto&&, auto&&) { tick(); });
             window = Window();
-            window.Title(L"Sound Connect");
+            window.Title(L"Bandwave");
             window.Content(root);
             window.ExtendsContentIntoTitleBar(true);
             window.SetTitleBar(get<FrameworkElement>(L"TitleDrag"));
@@ -413,7 +413,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         data.hWnd = main_hwnd; data.uID = 1; data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
         data.uCallbackMessage = kTrayMessage; data.uVersion = NOTIFYICON_VERSION_4;
         data.hIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0));
-        wcscpy_s(data.szTip, L"Sound Connect");
+        wcscpy_s(data.szTip, L"Bandwave");
         return data;
     }
     // The icon stays in the notification area for as long as the app runs, while the setting is on.
@@ -435,7 +435,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             if (event == NIN_SELECT || event == NIN_KEYSELECT || event == WM_LBUTTONUP) app.from_tray();
             else if (event == WM_CONTEXTMENU || event == WM_RBUTTONUP) {
                 HMENU menu = CreatePopupMenu();
-                AppendMenuW(menu, MF_STRING, 1, L"Open Sound Connect");
+                AppendMenuW(menu, MF_STRING, 1, L"Open Bandwave");
                 AppendMenuW(menu, MF_STRING, 2, L"Quit");
                 POINT at{}; GetCursorPos(&at); SetForegroundWindow(hwnd);
                 const int chosen = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON, at.x, at.y, 0, hwnd, nullptr);
@@ -1327,6 +1327,14 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         auto v = Windows::ApplicationModel::Package::Current().Id().Version();
         return std::to_wstring(v.Major) + L"." + std::to_wstring(v.Minor) + L"." + std::to_wstring(v.Build);
     }
+    // Installed from the Microsoft Store: the Store keeps the app up to date, so its own update
+    // check and Check now stay out of the way. Builds from GitHub keep them.
+    static bool store_install() {
+        UINT32 length = 0;
+        if (GetCurrentPackageFullName(&length, nullptr) == APPMODEL_ERROR_NO_PACKAGE) return false;
+        try { return Windows::ApplicationModel::Package::Current().SignatureKind() == Windows::ApplicationModel::PackageSignatureKind::Store; }
+        catch (...) { return false; }
+    }
     void attach_flyout(const wchar_t* button, std::function<void(StackPanel const&)> fill) {
         Flyout flyout;
         StackPanel panel;
@@ -1612,6 +1620,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             wave.LostFocus([this, over](auto&&, auto&&) { if (!*over) request_wave_preview(false); });
             add_row(panel, L"Wave", L"How much the lines on the main screen move with your music. They also learn what you usually play, so any kind of music moves them.", wave);
             add_row(panel, L"Widget", L"Shows your six main-screen EQs. Add it from Win + W.", make_value(L"WF-C710N"));
+            if (!store_install()) {
             auto updates = make_switch(L"Check for updates", earbud::updates::load_settings().check);
             updates.Toggled([updates](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.check = updates.IsOn(); earbud::updates::save_settings(s); });
             // Check now (0.8.0): looks straight away, whatever the daily switch says, and answers in its own label.
@@ -1621,19 +1630,20 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             StackPanel update_controls; update_controls.Orientation(Orientation::Horizontal); update_controls.Spacing(12);
             update_controls.Children().Append(check_now); update_controls.Children().Append(updates);
             add_row(panel, L"Check for updates", L"Once a day, from this project's GitHub releases, or now with Check now. Nothing about you is sent.", update_controls);
+            }
             auto tray = make_switch(L"Keep running in the tray", earbud::updates::load_settings().tray);
             tray.Toggled([this, tray](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.tray = tray.IsOn(); earbud::updates::save_settings(s); if (s.tray) add_tray(); else remove_tray(); });
-            add_row(panel, L"Keep running in the tray", L"Closing the window keeps Sound Connect in the notification area. Quit from its menu there.", tray);
+            add_row(panel, L"Keep running in the tray", L"Closing the window keeps Bandwave in the notification area. Quit from its menu there.", tray);
             auto startup = make_switch(L"Start with Windows", false); startup.IsEnabled(false);
             startup.Toggled([this, startup](auto&&, auto&&) { if (!startup_updating) sync_startup(startup, startup.IsOn()); });
-            add_row(panel, L"Start with Windows", L"Opens in the tray when you sign in, so the widget and your earbuds are ready. If it won't stay on, allow Sound Connect in Windows Settings > Apps > Startup.", startup);
+            add_row(panel, L"Start with Windows", L"Opens in the tray when you sign in, so the widget and your earbuds are ready. If it won't stay on, allow Bandwave in Windows Settings > Apps > Startup.", startup);
             sync_startup(startup, std::nullopt);
         });
         attach_flyout(L"AboutButton", [this](StackPanel const& panel) {
             add_row(panel, L"Model", L"Your earbuds.", make_value(L"WF-C710N"));
             about_firmware = make_value(L"—");
             add_row(panel, L"Firmware", L"Read from your earbuds.", about_firmware);
-            add_row(panel, L"App version", L"Sound Connect.", make_value(app_version()));
+            add_row(panel, L"App version", L"Bandwave.", make_value(app_version()));
             auto bluetooth = make_action(L"Open");
             bluetooth.Click([](auto&&, auto&&) { ShellExecuteW(nullptr, L"open", L"ms-settings:bluetooth", nullptr, nullptr, SW_SHOWNORMAL); });
             add_row(panel, L"Bluetooth settings", L"Pair or remove devices in Windows.", bluetooth);
@@ -2608,7 +2618,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         const auto current = earbud::updates::parse_version(app_version());
         auto settings = earbud::updates::load_settings();
         auto say = [status](std::wstring const& text, bool enabled) { if (status) { status.Content(box_value(text)); status.IsEnabled(enabled); } };
-        if (render_review) co_return;
+        if (render_review || store_install()) co_return;
         if (!current) { say(L"Development build", true); co_return; } // unpackaged builds have no version to compare
         if (!force && (!settings.check || earbud::updates::now_seconds() - settings.last_check < 24 * 3600)) co_return;
         settings.last_check = earbud::updates::now_seconds();

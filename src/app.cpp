@@ -472,8 +472,8 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR arguments,int){
             CoRevokeClassObject(cookie);
         }
         LocalFree(descriptor);CloseHandle(mutex);return 0;
-    }catch(const winrt::hresult_error& e){if(!provider)MessageBoxW(nullptr,e.message().c_str(),L"Sound Connect",MB_ICONERROR);return 1;}
-    catch(const std::exception& e){if(!provider)MessageBoxW(nullptr,winrt::to_hstring(e.what()).c_str(),L"Sound Connect",MB_ICONERROR);return 1;}
+    }catch(const winrt::hresult_error& e){if(!provider)MessageBoxW(nullptr,e.message().c_str(),L"Bandwave",MB_ICONERROR);return 1;}
+    catch(const std::exception& e){if(!provider)MessageBoxW(nullptr,winrt::to_hstring(e.what()).c_str(),L"Bandwave",MB_ICONERROR);return 1;}
 }
 
 

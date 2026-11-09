@@ -1,17 +1,20 @@
-# Sound Connect
+# Bandwave
 
-**Sound Connect** is a Windows 11 app and Win + W widget for Sony **WF-C710N** earbuds. Check
+**Bandwave** is a Windows 11 app and Win + W widget for Sony **WF-C710N** earbuds. Check
 the batteries, switch noise cancelling and ambient sound, and shape the sound with your own EQs,
 without reaching for your phone.
 
-![Sound Connect's main screen with music playing: fifteen glowing sound lines in the music's colour above the battery levels, the three sound modes and six EQs](docs/images/main.png)
+Bandwave was called Sound Connect until 0.9.0. Updating keeps your EQs and settings; add the
+widget again from Win + W afterwards.
+
+![Bandwave's main screen with music playing: fifteen glowing sound lines in the music's colour above the battery levels, the three sound modes and six EQs](docs/images/main.png)
 
 ## What it does
 
 - **Watch your music:** fifteen lines on the main screen take the shape of the sound mode and
   sway with the music, in a colour that follows it. The middle lines are sharp and the outer
   ones soft, like a camera focused on the centre. With no music the lines drift quietly, and in
-  the tray Sound Connect draws nothing at all.
+  the tray Bandwave draws nothing at all.
 - **Fits your music:** the lines and the colour learn what you usually listen to, so quiet acoustic
   tracks move them as much as loud electronic ones, and every colour gets its turn: blue when the
   vocals lead, red when the bass does. Choose **Calm**, **Balanced** or **Lively** in Settings >
@@ -60,43 +63,44 @@ without reaching for your phone.
 1. Turn on **Developer Mode** in Windows Settings > System > For developers. Windows only shows
    widgets from apps outside the Microsoft Store when it's on.
 2. Pair your WF-C710N in Windows Bluetooth settings.
-3. Download **EarbudControls-Setup-0.8.3.exe** from
+3. Download **EarbudControls-Setup-0.9.0.exe** from
    [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
    app and the widget together.
-4. Open **Sound Connect** from Start. To add the widget, open Win + W, choose Add widgets, then
+4. Open **Bandwave** from Start. To add the widget, open Win + W, choose Add widgets, then
    **WF-C710N**.
 
 **Requirements:** Windows 11 x64, version 22H2 or newer, with the Windows Web Experience Pack
 (for Widgets). Other earbud models and ARM64 PCs aren't supported.
 
-**About the certificate:** Sound Connect is signed with the project's own certificate. The
+**About the certificate:** Bandwave is signed with the project's own certificate. The
 first install asks for administrator permission once, only to trust that certificate; nothing
-else runs as administrator. Windows SmartScreen may still warn the first time you download it.
+else runs as administrator. Updating from Sound Connect asks once more, because Bandwave has a
+new certificate. Windows SmartScreen may still warn the first time you download it.
 Setup also installs Microsoft's Windows App Runtime if your PC doesn't already have it.
 
 ## Updates
 
-Sound Connect checks for a new version once a day. When one is out, choose **Update** in the
+Bandwave checks for a new version once a day. When one is out, choose **Update** in the
 title bar: it downloads, checks the file's checksum and signature, and updates in place,
 keeping your EQs and settings. To look straight away, choose **Check now** in Settings > App and
 widget, where you can also turn the daily check off. Running a newer setup yourself works the
-same way.
+same way. A copy from the Microsoft Store is updated by the Store instead.
 
 ## Good to know
 
 Changing **Connect to two devices at once** makes the earbuds drop every connection and reconnect;
-your phone may need reconnecting from its Bluetooth settings. Sound Connect asks before it
+your phone may need reconnecting from its Bluetooth settings. Bandwave asks before it
 changes it.
 
 ## Uninstall
 
-Go to Windows Settings > Apps > Installed apps > **Sound Connect** > Uninstall. It asks whether
+Go to Windows Settings > Apps > Installed apps > **Bandwave** > Uninstall. It asks whether
 to remove your EQs and settings too, and keeps them unless you say so. Uninstalling never
 changes your Bluetooth pairing or anything stored on the earbuds.
 
 ## Privacy
 
-Sound Connect has no account and sends no telemetry. Your EQs and settings stay on your PC, in
+Bandwave has no account and sends no telemetry. Your EQs and settings stay on your PC, in
 `%LOCALAPPDATA%\Earbud Controls`. To fit the waves to your music it keeps 14 numbers there (how
 loud each frequency range usually is), never what you played. The only network request is the
 update check to this project's GitHub Releases, which sends nothing about you.
@@ -117,6 +121,6 @@ SDK and C++/WinRT.
 
 ## License
 
-Sound Connect is an independent project, not affiliated with Sony or Microsoft. Its source is
+Bandwave is an independent project, not affiliated with Sony or Microsoft. Its source is
 MIT licensed. See [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) for the open-source
 components it uses; Microsoft's redistributable packages keep their own license terms.
