@@ -41,6 +41,6 @@ Do not remove other certificates or Microsoft framework packages.
 WIDGET: Small shows batteries and the sound modes; Medium and Large add your six
 main-screen EQs. Bandwave supports Sony WF-C710N only.
 
-Source, issues and releases: https://github.com/KanuTomer/Sound-Connect
+Source, issues and releases: https://github.com/KanuTomer/Bandwave
 Independent project; not affiliated with Sony or Microsoft. See LICENSE and
 THIRD_PARTY_NOTICES.txt; full third-party licenses are in Licenses/.

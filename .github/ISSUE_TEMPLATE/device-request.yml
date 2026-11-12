@@ -1,0 +1,45 @@
+name: Request support for a Sony device
+description: Ask for Bandwave to support Sony earbuds or headphones it lists as "Not supported yet".
+title: "Support for "
+labels: ["device-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bandwave adds a model once it can be tested on the real device. The details below help decide what to add next.
+        Please don't paste Bluetooth addresses or anything else personal.
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: The model name, as printed on the device or shown in Sony's app.
+      placeholder: WH-1000XM5
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Shown in Sony's phone app under the device's settings.
+    validations:
+      required: false
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: false
+  - type: textarea
+    id: controls
+    attributes:
+      label: What would you like to control?
+      description: For example noise cancelling, the equalizer, touch controls.
+    validations:
+      required: false
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Testing
+      options:
+        - label: I own this device and can try test builds.

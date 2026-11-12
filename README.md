@@ -64,7 +64,7 @@ widget again from Win + W afterwards.
    widgets from apps outside the Microsoft Store when it's on.
 2. Pair your WF-C710N in Windows Bluetooth settings.
 3. Download **EarbudControls-Setup-0.9.0.exe** from
-   [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
+   [Releases](https://github.com/KanuTomer/Bandwave/releases) and run it. It installs the
    app and the widget together.
 4. Open **Bandwave** from Start. To add the widget, open Win + W, choose Add widgets, then
    **WF-C710N**.
