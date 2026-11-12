@@ -22,7 +22,7 @@ struct Review {
     std::map<std::wstring,ReviewRecord> records;
     Review(){
         state.ready=state.fresh=state.noise_supported=state.ambient_supported=state.eq_supported=true;
-        state.status="Connected";state.batteries={70,0,50};state.noise=2;state.ambient=20;state.voice=0;state.preset=MDR_EQ_USER_2;state.bands={1,0,1,2,3};state.bass=4;state.firmware="1.0.5";state.checked=std::time(nullptr);
+        state.control=ControlState::Ready;state.windows_connected=true;state.batteries={70,0,50};state.noise=2;state.ambient=20;state.voice=0;state.preset=MDR_EQ_USER_2;state.bands={1,0,1,2,3};state.bass=4;state.firmware="1.0.5";state.checked=std::time(nullptr);
         for(int id:{26,25,0,8,9,10,11,12,13,14,15,24})state.presets.emplace_back(id,preset_name(id));
         wchar_t executable[32768]{};auto count=GetModuleFileNameW(nullptr,executable,32768);if(!count||count==32768)winrt::throw_last_error();
         auto folder=std::filesystem::path(executable).parent_path()/L"Public"/L"Icons";

@@ -10,9 +10,15 @@
 #include <map>
 #include <optional>
 
+// Our control channel to a device Windows has connected. Windows owns the Bluetooth link itself.
+enum class ControlState { Idle, Opening, Ready, InUse, Unavailable };
+inline const char* control_name(ControlState state){switch(state){case ControlState::Opening:return "opening";case ControlState::Ready:return "ready";case ControlState::InUse:return "in_use";case ControlState::Unavailable:return "unavailable";default:return "idle";}}
+
 struct Snapshot {
     bool ready{}, pending{}, noise_supported{}, ambient_supported{}, eq_supported{}, fresh{};
-    std::string status="Not connected", error, firmware, address;
+    std::string error, firmware, address, model; // model: the profile id
+    ControlState control=ControlState::Idle;
+    bool windows_connected{}; // as Windows reports the device, not our channel
     std::array<int,3> batteries{-1,-1,-1};
     int noise=-1, ambient=-1, voice=-1, bass{};
     uint32_t preset{};
@@ -35,6 +41,13 @@ struct Snapshot {
     std::vector<std::string> devices;                       // connected devices, by name
 };
 
+// The one line of status the fallback editor and the widget show: Windows' word for the link, or
+// what is wrong with our channel. Empty when there is nothing to say.
+inline const char* status_word(const Snapshot& s){
+    if(!s.windows_connected&&!s.ready)return "Not connected";
+    switch(s.control){case ControlState::Opening:return "Reading…";case ControlState::InUse:return "Controls in use by another app";case ControlState::Unavailable:return "Controls unavailable";default:return "";}
+}
+
 inline const char* preset_name(uint32_t preset) {
     switch(preset) {
     case MDR_EQ_OFF:return "Off"; case MDR_EQ_BRIGHT:return "Bright"; case MDR_EQ_EXCITED:return "Excited";
@@ -49,14 +62,17 @@ inline const char* preset_name(uint32_t preset) {
 // live slot. KeepSlot writes them to Custom 1 or 2 (value) and returns to the preset that was
 // playing. ReadSlots reads Manual, Custom 1 and Custom 2 into curves for the first-connect import.
 // Setting writes one advertised key from Snapshot::settings; PowerOff turns the earbuds off.
-enum class Operation { Activate, Deactivate, Retry, Noise, Ambient, Voice, Preset, Bands, Bass, Reset, Policy, Suspend, Reconnect, Disconnect, ApplyProfile, KeepSlot, ReadSlots, Setting, PowerOff };
+enum class Operation { Activate, Deactivate, Open, Noise, Ambient, Voice, Preset, Bands, Bass, Reset, Policy, Suspend, LinkUp, LinkDown, ApplyProfile, KeepSlot, ReadSlots, Setting, PowerOff };
 struct Command { Operation operation; int value{}; std::vector<int32_t> bands; int bass{}; uint32_t preset{}; std::string key; };
 
-class Controller {
+// One device's controls: its own worker thread, queue, last-known state and release policy.
+class ControlSession {
 public:
-    explicit Controller(std::function<void()> notify, Snapshot initial={}) : state_(std::move(initial)), notify_(std::move(notify)), worker_([this]{run();}) {}
-    ~Controller() { {std::lock_guard lock(mutex_); stopping_=true;} SetEvent(wake_); worker_.join();CloseHandle(wake_); }
+    ControlSession(std::string address, const bandwave::ModelProfile& profile, std::function<void()> notify, Snapshot initial={}) : state_(std::move(initial)), notify_(std::move(notify)), address_(std::move(address)), profile_(profile), worker_([this]{run();}) { state_.address=address_; state_.model=std::string(profile_.id); }
+    ~ControlSession() { {std::lock_guard lock(mutex_); stopping_=true;} SetEvent(wake_); worker_.join();CloseHandle(wake_); }
     Snapshot snapshot() const { std::lock_guard lock(mutex_); return state_; }
+    const std::string& address() const { return address_; }
+    const bandwave::ModelProfile& profile() const { return profile_; }
     void interest(bool active) {
         std::lock_guard lock(mutex_);
         if (requested_active_==active) return;
@@ -72,11 +88,11 @@ public:
     bool send(Command command) {
         {
             std::lock_guard lock(mutex_);
-            if(command.operation==Operation::Retry && (!requested_active_||state_.pending)) return false;
+            if(command.operation==Operation::Open && (!requested_active_||state_.pending)) return false;
             // Quick controls queue behind a write in progress, and only the newest of each is kept,
             // so a fast run of taps ends on the last one instead of being refused.
             const bool queues=command.operation==Operation::Noise||command.operation==Operation::Ambient||command.operation==Operation::Voice||command.operation==Operation::Setting;
-            if(command.operation!=Operation::Retry && (!requested_active_ || !state_.ready || (!state_.fresh&&!queues)||(state_.pending&&!queues))) return false;
+            if(command.operation!=Operation::Open && (!requested_active_ || !state_.ready || (!state_.fresh&&!queues)||(state_.pending&&!queues))) return false;
             if(command.operation==Operation::Bands || command.operation==Operation::Bass || command.operation==Operation::Ambient || command.operation==Operation::ApplyProfile||queues)
                 std::erase_if(commands_,[&](const auto& c){return c.operation==command.operation&&c.key==command.key;});
             if(commands_.size()>=16) return false;
@@ -94,6 +110,8 @@ private:
     std::function<void()> notify_;
     std::deque<Command> commands_;
     bool requested_active_{}, stopping_{};
+    const std::string address_;
+    const bandwave::ModelProfile& profile_;
     std::thread worker_;
 
     void publish(const std::function<void(Snapshot&)>& change) {
@@ -102,7 +120,7 @@ private:
     }
     void read(Session& session) {
         auto next=snapshot();
-        next.ready=true; next.fresh=true; next.error.clear(); next.status="Connected";
+        next.ready=true; next.fresh=true; next.error.clear(); next.control=ControlState::Ready; next.windows_connected=true;
         next.firmware=session.text(MDR_TEXT_FIRMWARE_VERSION);
         next.noise_supported=session.noise_reported && session.feature(MDR_FEATURE_NOISE_CANCELLING)==MDR_AVAILABILITY_AVAILABLE;
         next.ambient_supported=session.noise_reported && session.feature(MDR_FEATURE_AMBIENT_SOUND)==MDR_AVAILABILITY_AVAILABLE;
@@ -353,6 +371,8 @@ private:
         catch(...){try{select(session,playing);}catch(...){}throw;} // never leave the listener on the slot being written
         select(session,playing);
     }
+    // Sony's devices take one controller at a time: a refused channel is held by another app.
+    static bool refused(std::string_view error){return error.starts_with("In use")||error.find("10061")!=std::string_view::npos||error.find("refused")!=std::string_view::npos;}
     void run() {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         std::unique_ptr<Session> session;
@@ -374,33 +394,31 @@ private:
                 if(commands_.empty())ResetEvent(wake_);
             }
             bool scheduled=false,connecting=false;
-            if(!command&&!session&&Clock::now()>=retry_at){scheduled=true;retry_at=Clock::time_point::max();command=Command{active?Operation::Retry:Operation::Reconnect};}
+            if(!command&&!session&&Clock::now()>=retry_at){scheduled=true;retry_at=Clock::time_point::max();command=Command{active?Operation::Open:Operation::LinkUp};}
             // A fresh trigger (activation, Bluetooth link, resume) restarts the backoff.
-            if(command&&!scheduled&&(command->operation==Operation::Activate||command->operation==Operation::Retry||command->operation==Operation::Reconnect)){retries=0;retry_at=Clock::time_point::max();link_grace=command->operation==Operation::Reconnect?2:0;}
+            if(command&&!scheduled&&(command->operation==Operation::Activate||command->operation==Operation::Open||command->operation==Operation::LinkUp)){retries=0;retry_at=Clock::time_point::max();link_grace=command->operation==Operation::LinkUp?2:0;}
             try {
                 if(command && command->operation==Operation::Deactivate) {
                     active=false;release_at=snapshot().release_when_hidden?Clock::now()+15s:Clock::time_point::max();
-                    if(!session) publish([](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.status="Not connected";});
+                    if(!session) publish([](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.control=ControlState::Idle;});
                 } else if(command&&command->operation==Operation::Policy){release_at=!active&&snapshot().release_when_hidden?Clock::now()+15s:Clock::time_point::max();
-                } else if(command&&(command->operation==Operation::Suspend||command->operation==Operation::Disconnect)){
+                } else if(command&&(command->operation==Operation::Suspend||command->operation==Operation::LinkDown)){
                     suspended=command->operation==Operation::Suspend;session.reset();release_at=Clock::time_point::max();retry_at=Clock::time_point::max();retries=0;
-                    publish([&](auto& s){s.ready=s.pending=s.fresh=false;s.status=suspended?"Sleeping":"Not connected";s.error.clear();});
-                } else if(command && (command->operation==Operation::Activate || command->operation==Operation::Retry||command->operation==Operation::Reconnect)) {
-                    if(command->operation==Operation::Reconnect){suspended=false;if(snapshot().address.empty()||(!active&&snapshot().release_when_hidden))continue;}
+                    publish([&](auto& s){s.ready=s.pending=s.fresh=false;s.control=ControlState::Idle;if(!suspended)s.windows_connected=false;s.error.clear();});
+                } else if(command && (command->operation==Operation::Activate || command->operation==Operation::Open||command->operation==Operation::LinkUp)) {
+                    if(command->operation==Operation::LinkUp){suspended=false;if(snapshot().address.empty()||(!active&&snapshot().release_when_hidden))continue;}
                     else {active=true;release_at=Clock::time_point::max();}
                     if(suspended)continue;
                     if(!session) {
                         connecting=true;session.reset();
                         // Check the Bluetooth link first so a disconnected pair never flashes Connecting.
-                        auto device=find_earbuds();
-                        publish([](auto& s){s.ready=false;s.fresh=false;s.pending=true;s.status="Connecting...";s.error.clear();});
-                        auto previous=snapshot().address;
-                        if(!previous.empty() && previous!=device.address) throw std::runtime_error("The remembered earbuds are unavailable; another WF-C710N will not be selected automatically.");
-                        session=std::make_unique<Session>();session->connect(device,false,false,true);
-                        publish([&](auto& s){s.address=device.address;++s.connection_generation;});
+                        find_device(address_);
+                        publish([](auto& s){s.ready=false;s.fresh=false;s.pending=true;s.control=ControlState::Opening;s.windows_connected=true;s.error.clear();});
+                        session=std::make_unique<Session>();session->connect(address_,profile_.transport,profile_.reported_model,true);
+                        publish([](auto& s){++s.connection_generation;});
                         read(*session);retries=0;
-                    }else if(command->operation!=Operation::Reconnect){
-                        publish([](auto& s){s.pending=true;s.status="Refreshing...";});
+                    }else if(command->operation!=Operation::LinkUp){
+                        publish([](auto& s){s.pending=true;});
                         check(mdrHeadphonesRequestSync(session->headphones),"Refresh state");session->until(MDR_EVENT_SYNC_COMPLETE,3s);read(*session);
                     }
                 } else if(command) {
@@ -409,7 +427,7 @@ private:
                 }
                 if(session && !active && Clock::now()>=release_at) {
                     session.reset();
-                    publish([](auto& s){s.ready=false;s.fresh=false;s.status="Controls idle";});
+                    publish([](auto& s){s.ready=false;s.fresh=false;s.control=ControlState::Idle;});
                 }
                 if(session) {
                     for(int drained=0;drained<256;++drained){
@@ -431,18 +449,21 @@ private:
                 session.reset();
                 if(link_grace>0&&retries<std::size(retry_delays)){--link_grace;retry_at=Clock::now()+retry_delays[retries++];}
                 else{retry_at=Clock::time_point::max();retries=0;link_grace=0;}
-                publish([](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.status="Not connected";s.error.clear();});
+                publish([](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.control=ControlState::Idle;s.windows_connected=false;s.error.clear();});
             } catch(const std::exception& error) {
                 session.reset();
                 {std::lock_guard lock(mutex_);std::erase_if(commands_,[](const auto& c){return c.operation!=Operation::Activate && c.operation!=Operation::Deactivate;});}
-                publish([&](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.status=active?"Reconnecting…":"Controls unavailable";s.error=error.what();});
+                // The channel often isn't ready for a moment after the link comes up, so the first failures
+                // are still "opening". A refusal means something else holds the controls.
+                const auto state=refused(error.what())?ControlState::InUse:(connecting||active)&&!suspended&&retries<3?ControlState::Opening:ControlState::Unavailable;
+                publish([&](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.control=state;s.error=error.what();});
                 // A drop mid-session retries too, not only a failed connect, and rides out the
                 // moment Windows briefly reports the earbuds as disconnected.
                 if((connecting||active)&&!suspended&&retries<std::size(retry_delays)){retry_at=Clock::now()+retry_delays[retries++];link_grace=std::max(link_grace,3);}
             } catch(const winrt::hresult_error& error) {
                 session.reset();
                 if((connecting||active)&&!suspended&&retries<std::size(retry_delays))retry_at=Clock::now()+retry_delays[retries++];
-                publish([&](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.status="Bluetooth unavailable";s.error=winrt::to_string(error.message());});
+                publish([&](auto& s){s.ready=false;s.pending=false;s.fresh=false;s.control=ControlState::Unavailable;s.error=winrt::to_string(error.message());});
             }
             // No scheduled work while warm and idle. Only actual socket data,
             // commands, lifecycle events, or the optional release deadline wake us.
@@ -451,7 +472,7 @@ private:
             auto deadline=session?release_at:retry_at;
             if(deadline!=Clock::time_point::max())timeout=static_cast<DWORD>(std::clamp<int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline-Clock::now()).count(),0,MAXDWORD-1));
             auto waited=WaitForMultipleObjects(waits[1]?2:1,waits,FALSE,timeout);
-            if(waited==WAIT_FAILED){publish([](auto& s){s.ready=s.pending=s.fresh=false;s.status="Controls unavailable";s.error="Could not wait for Bluetooth events.";});break;}
+            if(waited==WAIT_FAILED){publish([](auto& s){s.ready=s.pending=s.fresh=false;s.control=ControlState::Unavailable;s.error="Could not wait for Bluetooth events.";});break;}
         }
     }
 };

@@ -66,7 +66,6 @@ static Snapshot load_cache(const std::filesystem::path& path,bool& logging) {
         if(json.HasKey(L"bands")){auto bands=json.GetNamedArray(L"bands");if(bands.Size()==5)for(auto value:bands)s.bands.push_back(static_cast<int32_t>(value.GetNumber()));}
         if(json.HasKey(L"presets")){auto presets=json.GetNamedArray(L"presets");if(presets.Size()<=64)for(auto value:presets){auto preset=value.GetObject();s.presets.emplace_back(static_cast<uint32_t>(preset.GetNamedNumber(L"id")),winrt::to_string(preset.GetNamedString(L"name")));}}
         s.batteries={static_cast<int>(json.GetNamedNumber(L"left",-1)),static_cast<int>(json.GetNamedNumber(L"right",-1)),static_cast<int>(json.GetNamedNumber(L"case",-1))};
-        s.status=s.checked?"Controls idle":"Not connected";
     }catch(...){}
     return s;
 }
@@ -92,7 +91,7 @@ struct WidgetProvider : winrt::implements<WidgetProvider,wp::IWidgetProvider,wp:
 class App {
 public:
     HWND dispatcher{},editor{};
-    std::unique_ptr<Controller> controller;
+    std::unique_ptr<ControlSession> controller;
     std::atomic<int> references{};
     std::map<std::wstring,WidgetRecord> widgets;
     WidgetIcons icons;
@@ -134,7 +133,10 @@ public:
         auto initial=load_cache(folder/L"state.json",logging);
         library=earbud::load_library(folder);
         std::filesystem::create_directories(folder);
-        controller=std::make_unique<Controller>([this]{PostMessageW(dispatcher,StateMessage,0,0);},std::move(initial));
+        // Until the owner keeps a session per device: the remembered device, else the first supported one paired.
+        auto address=initial.address;const bandwave::ModelProfile* profile=bandwave::profile_by_id("wf-c710n");
+        for(auto& device:bandwave::list_paired_sony())if(device.profile&&(address.empty()||device.address==address)){address=device.address;profile=device.profile;break;}
+        controller=std::make_unique<ControlSession>(address,*profile,[this]{PostMessageW(dispatcher,StateMessage,0,0);},std::move(initial));
         power_notification=RegisterSuspendResumeNotification(dispatcher,DEVICE_NOTIFY_WINDOW_HANDLE);
         DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=GUID_BTHPORT_DEVICE_INTERFACE;
         interface_notification=RegisterDeviceNotificationW(dispatcher,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
@@ -248,9 +250,9 @@ public:
         if(event==DBT_CUSTOMEVENT&&header->dbch_devicetype==DBT_DEVTYP_HANDLE){
             auto* notification=reinterpret_cast<DEV_BROADCAST_HANDLE*>(data);
             if(header->dbch_size<offsetof(DEV_BROADCAST_HANDLE,dbch_data)+sizeof(BTH_HCI_EVENT_INFO))return;
-            if(notification->dbch_eventguid==GUID_BLUETOOTH_HCI_EVENT){BTH_HCI_EVENT_INFO info{};std::memcpy(&info,notification->dbch_data,sizeof(info));if(info.connectionType==HCI_CONNECTION_TYPE_ACL&&remembered(info.bthAddress))controller->lifecycle(info.connected?Operation::Reconnect:Operation::Disconnect);}
+            if(notification->dbch_eventguid==GUID_BLUETOOTH_HCI_EVENT){BTH_HCI_EVENT_INFO info{};std::memcpy(&info,notification->dbch_data,sizeof(info));if(info.connectionType==HCI_CONNECTION_TYPE_ACL&&remembered(info.bthAddress))controller->lifecycle(info.connected?Operation::LinkUp:Operation::LinkDown);}
         }else if(header->dbch_devicetype==DBT_DEVTYP_DEVICEINTERFACE&&(event==DBT_DEVICEARRIVAL||event==DBT_DEVICEREMOVECOMPLETE)){
-            if(event==DBT_DEVICEREMOVECOMPLETE)controller->lifecycle(Operation::Disconnect);
+            if(event==DBT_DEVICEREMOVECOMPLETE)controller->lifecycle(Operation::LinkDown);
             watch_radios();
         }
     }
@@ -267,7 +269,7 @@ public:
         j.SetNamedValue(L"type",JsonValue::CreateStringValue(L"snapshot"));
         flag(L"ready",s.ready);flag(L"pending",s.pending);flag(L"fresh",s.fresh);
         flag(L"noise_supported",s.noise_supported);flag(L"ambient_supported",s.ambient_supported);flag(L"eq_supported",s.eq_supported);
-        j.SetNamedValue(L"status",JsonValue::CreateStringValue(winrt::to_hstring(s.status)));
+        j.SetNamedValue(L"status",JsonValue::CreateStringValue(winrt::to_hstring(status_word(s))));
         j.SetNamedValue(L"error",JsonValue::CreateStringValue(winrt::to_hstring(s.error)));
         j.SetNamedValue(L"firmware",JsonValue::CreateStringValue(winrt::to_hstring(s.firmware)));
         number(L"generation",s.connection_generation);number(L"checked",static_cast<double>(s.checked));
@@ -344,7 +346,7 @@ public:
             for(uint32_t b=0;b<5;++b){double v=bands.GetNumberAt(b);if(v<-10||v>10)return false;command.bands.push_back(static_cast<int32_t>(v));}
             double bass=message.GetNamedNumber(L"bass",99);if(bass<-10||bass>10)return false;command.bass=static_cast<int>(bass);return true;
         };
-        Command command{Operation::Retry};
+        Command command{Operation::Open};
         if(op==L"noise"&&value>=0&&value<=2)command={Operation::Noise,value};
         else if(op==L"ambient"&&value>=1&&value<=20)command={Operation::Ambient,value};
         else if(op==L"voice"&&(value==0||value==1))command={Operation::Voice,value};
@@ -422,7 +424,7 @@ public:
             if(message==AppDispatchMessage){self->dispatch();return 0;}
             if(message==StateMessage){self->changed();return 0;}
             if(message==WM_DEVICECHANGE){self->device_event(wparam,lparam);return TRUE;}
-            if(message==WM_POWERBROADCAST){if(wparam==PBT_APMSUSPEND)self->controller->lifecycle(Operation::Suspend);else if(wparam==PBT_APMRESUMEAUTOMATIC||wparam==PBT_APMRESUMESUSPEND)self->controller->lifecycle(Operation::Reconnect);return TRUE;}
+            if(message==WM_POWERBROADCAST){if(wparam==PBT_APMSUSPEND)self->controller->lifecycle(Operation::Suspend);else if(wparam==PBT_APMRESUMEAUTOMATIC||wparam==PBT_APMRESUMESUSPEND)self->controller->lifecycle(Operation::LinkUp);return TRUE;}
             if(message==WM_TIMER&&window==self->dispatcher){KillTimer(window,1);self->maybe_exit();return 0;}
         }catch(const winrt::hresult_error& e){self->diagnostic(winrt::to_string(e.message()));}catch(const std::exception& e){self->diagnostic(e.what());}
         return DefWindowProcW(window,message,wparam,lparam);

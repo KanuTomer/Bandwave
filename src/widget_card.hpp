@@ -84,7 +84,7 @@ static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector
     const char* battery_names[]={"Left","Right","Case"};Items cells;
     for(int i=0;i<3;++i){
         // While connected, an earbud with no reading isn't connected; say so calmly, not as an alarm.
-        int value=s.batteries[i];bool valid=value>0&&value<=100,off=i<2&&!valid&&s.ready&&s.fresh,low=battery_low(value)&&valid;auto reading=valid?std::to_string(value)+"%":off?std::string("Disconnected"):"--";
+        int value=s.batteries[i];bool valid=value>0&&value<=100,off=i<2&&!valid&&s.ready&&s.fresh,low=battery_low(value)&&valid;auto reading=valid?std::to_string(value)+"%":off?std::string("Not connected"):"--";
         if(i)cells.push_back(pad(compact?8:16));
         // Host typography scales with text size and follows high contrast.
         auto readout=text(reading,off?"Small":compact?"Default":expanded?"ExtraLarge":"Medium",!s.fresh||off,!off,"Left",1,low?"Attention":"Default");
@@ -94,7 +94,7 @@ static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector
     }
     // Status only earns a row when something needs attention. Reconnection is automatic.
     const bool healthy=s.fresh&&s.ready;
-    auto status=s.pending?(s.status=="Connecting..."?"Connecting…":"Updating…"):!s.ready?"Disconnected":"Updating…";
+    auto status=s.pending&&s.control!=ControlState::Opening?"Updating…":!s.ready?(*status_word(s)?status_word(s):"Not connected"):"Updating…";
     auto status_row=[&](){return columns({col({text(status,"Small",true)},"stretch",16)},16);};
     if(compact){if(s.fresh)add(columns(cells,36));else add(box({status_row()},36));add(noise_tiles(),4);}
     else{

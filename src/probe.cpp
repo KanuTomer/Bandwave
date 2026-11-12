@@ -9,6 +9,22 @@ static std::vector<int32_t> eq_bands(Session& session){
     check(mdrHeadphonesGetEqualizerBands(session.headphones,MDR_PROPERTY_CURRENT,bands,&count),"Read EQ bands");
     return {bands,bands+count};
 }
+// Read-only: prints one JSON line each time the earbuds report a different EQ, e.g. while Sony's
+// app auditions Find Your Equalizer candidates. Never writes. Stops after the given minutes.
+static void watch_eq(Session& session,int minutes){
+    std::string last;const auto start=Clock::now(),deadline=start+std::chrono::minutes(minutes);
+    std::cerr<<"Watching EQ for "<<minutes<<" min. Press Ctrl+C to stop.\n";
+    auto report=[&]{
+        MDREqualizer eq{};if(mdrHeadphonesGetEqualizer(session.headphones,MDR_PROPERTY_CURRENT,&eq)!=MDR_RESULT_OK)return;
+        std::ostringstream line;line<<"{\"preset\":"<<eq.preset<<",\"clear_bass\":"<<eq.clear_bass<<",\"bands\":[";
+        auto bands=eq_bands(session);for(size_t i=0;i<bands.size();++i)line<<(i?",":"")<<bands[i];line<<"]";
+        if(line.str()==last)return;last=line.str();
+        const auto ms=std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now()-start).count();
+        std::cout<<"{\"ms\":"<<ms<<","<<last.substr(1)<<"}\n"<<std::flush;
+    };
+    if(session.eq_reported)report();
+    while(Clock::now()<deadline)if(session.poll()==MDR_EVENT_EQUALIZER_CHANGED)report();
+}
 static void verify_eq(Session& session){
     session.capture_eq_error=true;
     if(!session.eq_reported || session.feature(MDR_FEATURE_EQUALIZER)!=MDR_AVAILABILITY_AVAILABLE)throw std::runtime_error("EQ was not reported; no EQ write was attempted.");
@@ -139,19 +155,22 @@ static void snapshot(Session& s, bool verified_noise, bool restored, bool verifi
 
 int main(int argc, char** argv) {
     bool ble=false, v1=false, verify=false, test_eq=false, events=false, survey=false;
+    int watch_minutes=0;
     for (int i=1; i<argc; ++i) {
         std::string arg=argv[i];
-        if (arg == "--ble") ble=true;
+        if (arg == "--watch-eq") { watch_minutes=15; if (i+1<argc && std::isdigit(static_cast<unsigned char>(argv[i+1][0]))) watch_minutes=std::clamp(std::atoi(argv[++i]),1,120); }
+        else if (arg == "--ble") ble=true;
         else if (arg == "--v1") v1=true;
         else if (arg == "--verify-noise") verify=true;
         else if (arg == "--verify-eq") test_eq=true;
         else if(arg=="--events")events=true;
         else if(arg=="--survey-eq")survey=true;
         else if (arg == "--help") {
-            std::cout << "earbud-probe [--ble | --v1] [--events] [--verify-noise] [--verify-eq] [--survey-eq]\nDefault: read-only V2 Classic probe; never scans or retries.\n"
+            std::cout << "earbud-probe [--ble | --v1] [--events] [--verify-noise] [--verify-eq] [--survey-eq] [--watch-eq [minutes]]\nDefault: read-only V2 Classic probe; never scans or retries.\n"
                          "--verify-noise changes noise mode once, confirms it, then restores the original state.\n"
                          "--verify-eq tests preset selection, one EQ band, and Clear Bass, then restores the original EQ.\n"
-                         "--survey-eq selects each preset to read its curve and Clear Bass, checks whether Clear Bass is per slot, then restores.\n";
+                         "--survey-eq selects each preset to read its curve and Clear Bass, checks whether Clear Bass is per slot, then restores.\n"
+                         "--watch-eq prints each EQ the earbuds report, one JSON line per change (default 15 minutes). Read-only.\n";
             return 0;
         } else { std::cerr << "Unknown argument. Use --help.\n"; return 2; }
     }
@@ -159,7 +178,11 @@ int main(int argc, char** argv) {
     try {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         Session session;
-        session.connect(find_earbuds(),ble,v1,events);
+        // The one supported Sony device Windows has connected. Never scans.
+        std::string address;const bandwave::ModelProfile* profile{};
+        for(auto& device:bandwave::list_paired_sony())if(device.profile&&device.connected){if(profile)throw std::runtime_error("More than one supported device is connected. Connect only the one to probe.");address=device.address;profile=device.profile;}
+        if(!profile)throw std::runtime_error("No supported Sony device is connected. Connect it in Windows Bluetooth settings, then run the probe again.");
+        session.connect(address,ble?bandwave::Transport::Ble:v1?bandwave::Transport::ClassicV1:bandwave::Transport::ClassicV2,profile->reported_model,events);
         bool verified=false, restored=false;
         if (verify) {
             if (v1) throw std::runtime_error("Automatic noise verification is limited to protocol V2.");
@@ -183,6 +206,7 @@ int main(int argc, char** argv) {
             catch (...) { std::cerr << "Noise test changed the mode but restoration was not confirmed. Check Sony Sound Connect.\n"; throw; }
             restored=true;
         }
+        if(watch_minutes){watch_eq(session,watch_minutes);return 0;}
         if(survey){survey_eq(session);return 0;}
         if(test_eq)verify_eq(session);
         snapshot(session,verified,restored,test_eq);
