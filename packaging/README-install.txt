@@ -10,8 +10,8 @@ This ZIP installs the same signed package with Install.cmd.
    Privacy & security > For developers. No other developer settings are needed.
 3. Run Install.cmd. First installation requests administrator permission ONLY
    to trust the included public certificate. Cancelling leaves the app uninstalled.
-4. Pair/connect Sony WF-C710N manually in Windows Bluetooth settings.
-5. Open Win + W, choose Add widgets and add WF-C710N. Open Bandwave
+4. Pair/connect your Sony earbuds manually in Windows Bluetooth settings.
+5. Open Win + W, choose Add widgets and add Bandwave. Open Bandwave
    from Start for companion controls. Pairing and widget placement are manual.
 
 If the picker is stale after enabling Developer Mode, close and reopen Win + W.
@@ -39,7 +39,9 @@ To remove certificate trust too, an administrator can remove ONLY thumbprint
 Do not remove other certificates or Microsoft framework packages.
 
 WIDGET: Small shows batteries and the sound modes; Medium and Large add your six
-main-screen EQs. Bandwave supports Sony WF-C710N only.
+main-screen EQs of the device you last opened in the app. To keep a widget on one
+device, choose Customize in its menu. Supported today: Sony WF-C710N. Other paired
+Sony devices are listed with a link to request support.
 
 Source, issues and releases: https://github.com/KanuTomer/Bandwave
 Independent project; not affiliated with Sony or Microsoft. See LICENSE and

@@ -1,7 +1,7 @@
 #pragma once
 // Levels of what this PC is playing, split into the seven bands that light the background. It uses
 // WASAPI loopback on the default output. It never sees phone audio, and it hears the music before
-// the earbuds apply their EQ. It only listens when the default output is the WF-C710N, so other
+// the earbuds apply their EQ. It only listens when the default output is the open device, so other
 // speakers never light the app; review builds may accept any output. Adapted from Tribit Connect.
 #include <windows.h>
 #include <mmdeviceapi.h>

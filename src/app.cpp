@@ -234,6 +234,7 @@ public:
         return list;
     }
     void recover(){
+        send_devices();
         try{for(auto info:wp::WidgetManager::GetDefault().GetWidgetInfos()){auto context=info.WidgetContext();auto& record=widgets[std::wstring(context.Id())];record.size=context.Size();record.pinned=widget_pinned(std::wstring(info.CustomState()));}update_widgets(true);}
         catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}
     }
@@ -429,6 +430,7 @@ public:
             list.Append(item);
         }
         j.SetNamedValue(L"list",list);
+        j.SetNamedValue(L"widgets",JsonValue::CreateNumberValue(static_cast<double>(widgets.size()))); // for the app's add-the-widget step
         auto text=winrt::to_string(j.Stringify());if(!force&&text==sent_devices)return;
         sent_devices=text;send_app(j);
     }
@@ -635,8 +637,8 @@ public:
 
 WidgetProvider::WidgetProvider(App& owner):app(owner){++app.references;app.post([&owner]{owner.provider_started=true;owner.recover();});}
 WidgetProvider::~WidgetProvider(){--app.references;app.post([owner=&app]{owner->maybe_exit();});}
-void WidgetProvider::CreateWidget(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& record=owner->widgets[id];record=WidgetRecord{};record.size=size;owner->update_widgets(true);});}
-void WidgetProvider::DeleteWidget(winrt::hstring const& id,winrt::hstring const&){app.post([owner=&app,id=std::wstring(id)]{owner->widgets.erase(id);owner->interest();});}
+void WidgetProvider::CreateWidget(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& record=owner->widgets[id];record=WidgetRecord{};record.size=size;owner->update_widgets(true);owner->send_devices();});}
+void WidgetProvider::DeleteWidget(winrt::hstring const& id,winrt::hstring const&){app.post([owner=&app,id=std::wstring(id)]{owner->widgets.erase(id);owner->interest();owner->send_devices();});}
 void WidgetProvider::OnActionInvoked(wp::WidgetActionInvokedArgs args){auto id=std::wstring(args.WidgetContext().Id());auto verb=std::wstring(args.Verb());app.post([owner=&app,id,verb]{owner->action(id,verb);});}
 void WidgetProvider::OnWidgetContextChanged(wp::WidgetContextChangedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{owner->widgets[id].size=size;owner->update_widgets();});}
 void WidgetProvider::OnCustomizationRequested(wp::WidgetCustomizationRequestedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& record=owner->widgets[id];record.size=size;record.active=true;record.customizing=true;owner->refresh_devices();owner->update_widgets();});} // this widget follows the app, or stays on one device

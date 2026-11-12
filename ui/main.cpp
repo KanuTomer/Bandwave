@@ -1608,8 +1608,56 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         control.IsEnabled(known && state != StartupTaskState::DisabledByPolicy && state != StartupTaskState::EnabledByPolicy);
         startup_updating = false;
     }
+    // ---------- Developer options ----------
+    // For installs from outside the Microsoft Store and for people building the app: what Windows
+    // needs before the widget appears, and how this copy was installed. Read afresh each time it
+    // opens; nothing here changes Windows, the buttons only open its own pages.
+    int widgets_pinned = 0;
+    static bool developer_mode() {
+        DWORD value = 0, size = sizeof(value);
+        return RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock", L"AllowDevelopmentWithoutDevLicense", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS && value != 0;
+    }
+    // 0 the Microsoft Store, 1 Bandwave's setup (its own certificate), 2 a build folder.
+    static int install_kind() {
+        UINT32 length = 0;
+        if (GetCurrentPackageFullName(&length, nullptr) == APPMODEL_ERROR_NO_PACKAGE) return 2;
+        try {
+            const auto kind = Windows::ApplicationModel::Package::Current().SignatureKind();
+            return kind == Windows::ApplicationModel::PackageSignatureKind::Store ? 0 : kind == Windows::ApplicationModel::PackageSignatureKind::None ? 2 : 1;
+        } catch (...) { return 2; }
+    }
+    void fill_developer(StackPanel const& panel) {
+        panel.Children().Clear();
+        const int kind = install_kind();
+        if (kind != 0) { // the Store's own widgets need no Developer Mode
+            if (developer_mode()) add_row(panel, L"Developer Mode", L"Windows shows widgets from apps outside the Microsoft Store only while this is on.", make_value(L"On"));
+            else {
+                auto open = make_action(L"Open Windows settings");
+                open.Click([](auto&&, auto&&) { ShellExecuteW(nullptr, L"open", L"ms-settings:developers", nullptr, nullptr, SW_SHOWNORMAL); });
+                add_row(panel, L"Turn on Developer Mode", L"Windows shows widgets from apps outside the Microsoft Store only while this is on.", open);
+            }
+        }
+        if (widgets_pinned > 0) add_row(panel, L"Widget", L"It shows the device you last opened. To keep one widget on a single device, choose Customize in its menu.", make_value(L"Added"));
+        else add_row(panel, L"Add the widget", L"Press Win + W, choose + Add widgets, then Bandwave.", make_value(L""));
+        static constexpr const wchar_t* sources[]{L"Microsoft Store", L"Bandwave setup", L"Developer build"};
+        static constexpr const wchar_t* notes[]{L"Updates come from the Microsoft Store.", L"Updates come from this project's GitHub releases.", L"Running from a build folder. The README says how to build and package it."};
+        add_row(panel, L"Installed from", notes[kind], make_value(sources[kind]));
+        if (kind != 2) {
+            UINT32 length = 0; GetCurrentPackageFamilyName(&length, nullptr);
+            std::wstring family(length, L'\0');
+            if (length && GetCurrentPackageFamilyName(&length, family.data()) == ERROR_SUCCESS) {
+                family.resize(length - 1);
+                auto name = make_value(family); name.IsTextSelectionEnabled(true); name.TextWrapping(TextWrapping::Wrap); name.MaxWidth(200); name.FontSize(12);
+                add_row(panel, L"Package", L"Worth quoting when you report a problem.", name);
+            }
+        }
+    }
     void build_app_flyouts() {
-        attach_flyout(L"AppButton", [this](StackPanel const& panel) {
+        {
+            Flyout flyout; StackPanel panel; panel.Width(420); flyout.Content(panel);
+            flyout.Opening([this, panel](auto&&, auto&&) { fill_developer(panel); });
+            get<Button>(L"DeveloperButton").Flyout(flyout);
+        }        attach_flyout(L"AppButton", [this](StackPanel const& panel) {
             // Wave (0.8.0) first (0.8.2): the panel opens upward from its button, so the pointer reaches
             // the other rows before it passes over this one. Resting on it shows the main screen's waves.
             auto wave = make_choice(L"Wave", {L"Calm", L"Balanced", L"Lively"}, static_cast<size_t>(render_review ? 1 : earbud::updates::load_settings().wave),
@@ -1621,7 +1669,6 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             wave.GotFocus([this](auto&&, RoutedEventArgs const& args) { if (auto c = args.OriginalSource().try_as<Control>(); c && c.FocusState() == FocusState::Keyboard) request_wave_preview(true, true); });
             wave.LostFocus([this, over](auto&&, auto&&) { if (!*over) request_wave_preview(false); });
             add_row(panel, L"Wave", L"How much the lines on the main screen move with your music. They also learn what you usually play, so any kind of music moves them.", wave);
-            add_row(panel, L"Widget", L"Shows the batteries, sound mode and six main-screen EQs of the device you last opened. Add it from Win + W.", make_value(L"Bandwave"));
             if (!store_install()) {
             auto updates = make_switch(L"Check for updates", earbud::updates::load_settings().check);
             updates.Toggled([updates](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.check = updates.IsOn(); earbud::updates::save_settings(s); });
@@ -2273,6 +2320,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             if (!d.address.empty()) device_list.push_back(std::move(d));
         }
         devices_known = true;
+        widgets_pinned = static_cast<int>(m.GetNamedNumber(L"widgets", 0));
         rebuild_devices();
         // The open device was forgotten in Windows: back to Devices.
         if (!device_address.empty() && !device_item(device_address)) {

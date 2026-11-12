@@ -24,7 +24,7 @@ public:
         wc.lpszClassName=L"EarbudControls.Page";RegisterClassW(&wc);
         viewport_=CreateWindowExW(WS_EX_CONTROLPARENT,wc.lpszClassName,L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_CLIPCHILDREN,0,0,0,0,window,nullptr,wc.hInstance,this);
         theme();
-        add(L"STATIC",L"WF-C710N",10,24,18,-165,30);
+        add(L"STATIC",L"Bandwave",10,24,18,-165,30);
         add(L"STATIC",L"Connecting...",11,24,54,-48,24);
         add(L"STATIC",L"",12,24,82,-48,24);
         add(L"BUTTON",L"Retry",103,-126,18,102,34,WS_TABSTOP|BS_OWNERDRAW);
@@ -63,7 +63,7 @@ public:
         add(L"BUTTON",L"Enable diagnostic logging (maximum 5 MiB)",310,24,112,-48,40,WS_TABSTOP|BS_AUTOCHECKBOX,2);
         add(L"STATIC",L"Logging stays on this laptop. No audio is recorded.",612,24,158,-48,46,0,2);
         add(L"BUTTON",L"Windows Bluetooth settings",105,24,234,254,36,WS_TABSTOP|BS_OWNERDRAW,2);
-        add(L"STATIC",L"Add WF-C710N Controls from Win + W > Add widgets.\r\n\r\nClose these controls when finished. The earbud connection is released after 15 seconds of inactivity.",613,24,302,-48,130,0,2);
+        add(L"STATIC",L"Add the Bandwave widget from Win + W > Add widgets.\r\n\r\nClose these controls when finished. The earbud connection is released after 15 seconds of inactivity.",613,24,302,-48,130,0,2);
         theme();
         RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
         SetWindowPos(window,nullptr,0,0,std::min<int>(static_cast<int>(660*scale_),work.right-work.left-48),std::min<int>(static_cast<int>(840*scale_),work.bottom-work.top-48),SWP_NOMOVE|SWP_NOZORDER);
@@ -100,7 +100,7 @@ public:
         if(s.ambient<1)text(401,"--");
         auto help=s.error.empty()?"Changes apply to the earbuds. Reset restores edits to the current preset.":s.error;
         text(419,help);
-        text(600,"Device: WF-C710N\r\nFirmware: "+(s.firmware.empty()?std::string("Not checked"):s.firmware)+"\r\nControls: "+std::string(s.ready?"Connected":status_word(s))+"\r\n"+battery_text(s)+"\r\n"+checked_time(s.checked));
+        text(600,"Device: "+(s.model.empty()?std::string("None"):bandwave::profile_by_id(s.model)?winrt::to_string(bandwave::profile_by_id(s.model)->display_name):s.model)+"\r\nFirmware: "+(s.firmware.empty()?std::string("Not checked"):s.firmware)+"\r\nControls: "+std::string(s.ready?"Connected":status_word(s))+"\r\n"+battery_text(s)+"\r\n"+checked_time(s.checked));
         text(601,s.error.empty()?std::string("Noise control: ")+(s.noise_supported?"Available":"Not verified")+"\r\nAmbient sound: "+(s.ambient_supported?"Available":"Not verified")+"\r\nEqualizer: "+(s.eq_supported?"Available":"Not verified"):s.error+"\r\n\r\nIf the phone app is open, close it and select Retry.");
         SendMessageW(control(310),BM_SETCHECK,get_logging()?BST_CHECKED:BST_UNCHECKED,0);
         if(!s.ready)baseline_.reset();

@@ -271,7 +271,7 @@ static int install() {
 
     if (quiet) { launch_app(*now); return 0; }
     if (ask(existing ? L"Bandwave is up to date" : old ? L"Sound Connect is now Bandwave" : L"Bandwave is installed",
-            (existing || old ? std::wstring(L"Version ") + kVersion + L". Your EQs and settings were kept." : std::wstring(L"Add the widget from Win + W > Add widgets > WF-C710N.")) + L"\n\nOpen Bandwave now?",
+            (existing || old ? std::wstring(L"Version ") + kVersion + L". Your EQs and settings were kept." : std::wstring(L"Add the widget from Win + W > Add widgets > Bandwave.")) + L"\n\nOpen Bandwave now?",
             TDCBF_YES_BUTTON | TDCBF_NO_BUTTON) == IDYES) launch_app(*now);
     return 0;
 }
