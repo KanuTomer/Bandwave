@@ -361,6 +361,7 @@ public:
             item.SetNamedValue(L"displayName",JsonValue::CreateStringValue(p.profile?winrt::hstring(p.profile->display_name):winrt::hstring(bandwave::model_part(p.windows_name))));
             item.SetNamedValue(L"form",JsonValue::CreateStringValue(p.profile&&p.profile->form==bandwave::FormFactor::Headphones?L"headphones":L"buds"));
             item.SetNamedValue(L"supported",JsonValue::CreateBooleanValue(p.profile!=nullptr));
+            item.SetNamedValue(L"request",JsonValue::CreateStringValue(!p.profile&&bandwave::sony_name(p.windows_name)?winrt::hstring(bandwave::model_part(p.windows_name)):winrt::hstring()));
             item.SetNamedValue(L"connected",JsonValue::CreateBooleanValue(p.connected));
             Snapshot s;if(auto* d=device(p.address))s=d->session->snapshot();
             item.SetNamedValue(L"control",JsonValue::CreateStringValue(winrt::to_hstring(control_name(s.control))));

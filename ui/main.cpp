@@ -48,6 +48,7 @@
 #include <vector>
 #include "model.hpp"
 #include "bridge.hpp"
+#include "../src/device_store.hpp"
 #include "link.hpp"
 #include "updates.hpp"
 #include "spectrum.hpp"
@@ -304,7 +305,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             if (!render_review) load_saved_library();
             rebuild_banks();
             sync_eq();
-            navigate(L"Main");
+            navigate(render_review ? L"Main" : L"Devices"); // the app opens on Devices
             if (!high_contrast) root.Background(brush(kBase)); // set once: replacing it repaints the whole window
             apply_light();
             root.SizeChanged([this](auto&&, auto&&) { build_dither();layout_banks(); draw_curve(); layout_library(false); });
@@ -1620,7 +1621,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             wave.GotFocus([this](auto&&, RoutedEventArgs const& args) { if (auto c = args.OriginalSource().try_as<Control>(); c && c.FocusState() == FocusState::Keyboard) request_wave_preview(true, true); });
             wave.LostFocus([this, over](auto&&, auto&&) { if (!*over) request_wave_preview(false); });
             add_row(panel, L"Wave", L"How much the lines on the main screen move with your music. They also learn what you usually play, so any kind of music moves them.", wave);
-            add_row(panel, L"Widget", L"Shows your six main-screen EQs. Add it from Win + W.", make_value(L"WF-C710N"));
+            add_row(panel, L"Widget", L"Shows the batteries, sound mode and six main-screen EQs of the device you last opened. Add it from Win + W.", make_value(L"Bandwave"));
             if (!store_install()) {
             auto updates = make_switch(L"Check for updates", earbud::updates::load_settings().check);
             updates.Toggled([updates](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.check = updates.IsOn(); earbud::updates::save_settings(s); });
@@ -1641,13 +1642,21 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             sync_startup(startup, std::nullopt);
         });
         attach_flyout(L"AboutButton", [this](StackPanel const& panel) {
-            add_row(panel, L"Model", L"Your earbuds.", make_value(L"WF-C710N"));
+            about_model = make_value(L"—");
+            add_row(panel, L"Model", L"This device.", about_model);
             about_firmware = make_value(L"—");
-            add_row(panel, L"Firmware", L"Read from your earbuds.", about_firmware);
+            add_row(panel, L"Firmware", L"Read from the device.", about_firmware);
+        });
+        // The app's own About, on Devices: nothing here belongs to one device.
+        attach_flyout(L"AppAboutButton", [this](StackPanel const& panel) {
             add_row(panel, L"App version", L"Bandwave.", make_value(app_version()));
             auto bluetooth = make_action(L"Open");
             bluetooth.Click([](auto&&, auto&&) { ShellExecuteW(nullptr, L"open", L"ms-settings:bluetooth", nullptr, nullptr, SW_SHOWNORMAL); });
-            add_row(panel, L"Bluetooth settings", L"Pair or remove devices in Windows.", bluetooth);
+            add_row(panel, L"Bluetooth settings", L"Pair or forget devices in Windows.", bluetooth);
+            auto report = make_action(L"Open");
+            Automation::AutomationProperties::SetName(report, L"Report a problem on GitHub");
+            report.Click([](auto&&, auto&&) { ShellExecuteW(nullptr, L"open", L"https://github.com/KanuTomer/Bandwave/issues/new/choose", nullptr, nullptr, SW_SHOWNORMAL); });
+            add_row(panel, L"Report a problem", L"Opens this project's GitHub issues in your browser. Nothing is sent by the app.", report);
         });
     }
     // Each group is wired to the part of the earbud it concerns. Narrow windows drop the middle.
@@ -2094,7 +2103,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     Dispatching::DispatcherQueueTimer preview_dwell{nullptr};
     std::function<void()> preview_next; // the second half of the change, run by preview_timer
     std::vector<std::pair<FrameworkElement, double>> preview_hidden; // the main screen's controls, and their own opacity
-    bool stage_on() const { return page == L"Main" || wave_preview; }
+    bool stage_on() const { return page == L"Main" || page == L"Devices" || wave_preview; }
     bool preview_possible() const { return page == L"Settings" && !high_contrast && music_playing && controls_live; }
     static constexpr int kPreviewOut = 150, kPreviewIn = 250;
     void preview_after(int ms, std::function<void()> next) {
@@ -2151,23 +2160,216 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         fade(get<UIElement>(L"WaveChain"), 1, 0);
         if (settings_now) fade(get<UIElement>(L"SettingsPage"), 1, 0);
     }
+    // ---------- Devices: the app's home ----------
+    // Every paired Sony device, as Windows has it. The tiles sit over the resting waves; a supported
+    // device opens its own screen, and one without a profile offers a way to ask for it.
+    struct DeviceItem {
+        std::string address; std::wstring name, display, form, control, request;
+        bool supported{}, connected{}, ready{}; std::array<int, 3> batteries{-1, -1, -1}; // left, right, case
+    };
+    std::vector<DeviceItem> device_list; bool devices_known = false;
+    std::map<std::string, std::string> snapshots; // each device's latest report, by address
+    std::map<std::string, dusk::Model> models;    // each device's EQs as last shown here, drafts included
+    TextBlock about_model{nullptr};
+    std::vector<std::pair<FrameworkElement, double>> devices_hidden;
+    Dispatching::DispatcherQueueTimer reading_timer{nullptr}; bool status_opening = false;
+
+    const DeviceItem* device_item(std::string const& address) const {
+        for (auto const& d : device_list) if (d.address == address) return &d;
+        return nullptr;
+    }
+    // The model's name, or the name Windows shows when two of one model are paired.
+    std::wstring device_title(DeviceItem const& d) const {
+        for (auto const& other : device_list) if (&other != &d && other.display == d.display) return d.name;
+        return d.display;
+    }
+    std::wstring current_title() const { auto* d = device_item(device_address); return d ? device_title(*d) : std::wstring(render_review ? L"WF-C710N" : L"Bandwave"); } // review exports stand in for the first model
+    static std::wstring device_status(DeviceItem const& d) {
+        if (!d.connected) return L"Not connected";
+        if (d.supported && d.control == L"in_use") return L"Controls in use by another app";
+        if (d.supported && d.control == L"unavailable") return L"Controls unavailable";
+        return L"Connected";
+    }
+    // Only the model's name goes into the link: never an address or a name someone gave the device.
+    static std::wstring request_link(std::wstring const& model) {
+        std::wstring url = L"https://github.com/KanuTomer/Bandwave/issues/new?template=device-request.yml&title=Support%20for%20";
+        for (auto c : to_string(hstring(model))) {
+            const auto u = static_cast<unsigned char>(c);
+            if (isalnum(u) || c == '-' || c == '_' || c == '.') url += static_cast<wchar_t>(c);
+            else { wchar_t hex[4]{}; swprintf_s(hex, L"%%%02X", u); url += hex; }
+        }
+        return url;
+    }
+    FrameworkElement battery_readings(DeviceItem const& d) {
+        StackPanel row; row.Orientation(Orientation::Horizontal); row.Spacing(14);
+        // Earbuds: left, case, right, as on the device's own screen. Headphones have one battery.
+        const std::vector<int> values = d.form == L"headphones" ? std::vector<int>{d.batteries[0]} : std::vector<int>{d.batteries[0], d.batteries[2], d.batteries[1]};
+        for (int value : values) {
+            const bool known = value > 0 && value <= 100;
+            StackPanel cell; cell.Width(34); cell.Spacing(5);
+            TextBlock number; number.Text(known ? std::to_wstring(value) : L"—"); number.FontFamily(FontFamily(L"Segoe UI Variable Display")); number.FontWeight(Windows::UI::Text::FontWeights::Light()); number.FontSize(20); number.HorizontalAlignment(HorizontalAlignment::Center);
+            Grid bar; bar.Height(2); bar.Background(brush(0xFFFFFF, .18));
+            Border level; level.Height(2); level.Width(known ? 34.0 * value / 100 : 0); level.HorizontalAlignment(HorizontalAlignment::Left); level.Background(brush(0xF2F2F2));
+            bar.Children().Append(level);
+            cell.Children().Append(number); cell.Children().Append(bar);
+            row.Children().Append(cell);
+        }
+        return row;
+    }
+    FrameworkElement device_tile(DeviceItem const& d) {
+        Grid layout;
+        for (auto height : {GridLengthHelper::FromPixels(112), GridLengthHelper::Auto(), GridLengthHelper::Auto(), GridLengthHelper::FromValueAndType(1, GridUnitType::Star), GridLengthHelper::Auto()}) { RowDefinition r; r.Height(height); layout.RowDefinitions().Append(r); }
+        if (d.supported && d.form != L"headphones") { // art exists for earbuds; other shapes get theirs with their profile
+            StackPanel art; art.Orientation(Orientation::Horizontal); art.Spacing(6); art.HorizontalAlignment(HorizontalAlignment::Center); art.VerticalAlignment(VerticalAlignment::Center);
+            Viewbox left; left.Height(66); left.Child(bud_art(L"bud-left.png"));
+            Viewbox right; right.Height(66); right.Child(bud_art(L"bud-right.png")); right.RenderTransformOrigin({.5f, .5f}); ScaleTransform mirror; mirror.ScaleX(-1); right.RenderTransform(mirror);
+            art.Children().Append(left); art.Children().Append(right);
+            Automation::AutomationProperties::SetAccessibilityView(art, Automation::Peers::AccessibilityView::Raw);
+            layout.Children().Append(art);
+        }
+        const auto title = d.supported ? device_title(d) : d.name;
+        TextBlock name; name.Text(title); name.FontSize(16); name.TextTrimming(TextTrimming::CharacterEllipsis); name.Margin(ThicknessHelper::FromLengths(0, 10, 0, 0));
+        Grid::SetRow(name, 1); layout.Children().Append(name);
+        TextBlock status; status.Text(device_status(d)); status.FontSize(12); status.TextWrapping(TextWrapping::Wrap); status.Foreground(theme_brush(L"SoftText"));
+        Grid::SetRow(status, 2); layout.Children().Append(status);
+        const double dim = d.connected ? 1 : .5; // a device Windows hasn't connected rests
+        if (d.supported) {
+            auto batteries = battery_readings(d); Grid::SetRow(batteries, 4); layout.Children().Append(batteries);
+            Button tile; tile.Width(204); tile.Height(262); tile.Padding(ThicknessHelper::FromLengths(18, 18, 18, 16)); tile.CornerRadius(CornerRadiusHelper::FromUniformRadius(8));
+            tile.HorizontalContentAlignment(HorizontalAlignment::Stretch); tile.VerticalContentAlignment(VerticalAlignment::Stretch);
+            tile.Background(brush(0x121212, .82)); tile.BorderBrush(theme_brush(L"RuleBrush")); tile.BorderThickness(ThicknessHelper::FromUniformLength(1));
+            tile.Content(layout); tile.Opacity(dim);
+            Automation::AutomationProperties::SetName(tile, title + L", " + device_status(d));
+            tile.Click([this, address = d.address](auto&&, auto&&) { open_device(address); });
+            return tile;
+        }
+        StackPanel ask; ask.Spacing(2);
+        TextBlock why; why.Text(L"Not supported yet"); why.FontSize(12); why.Foreground(theme_brush(L"SoftText"));
+        HyperlinkButton request; request.Content(box_value(L"Request support ›")); request.FontSize(12); request.Padding(ThicknessHelper::FromLengths(0, 2, 0, 2)); request.Margin(ThicknessHelper::FromLengths(0, 0, 0, -4));
+        request.Foreground(brush(0xF2F2F2));
+        Automation::AutomationProperties::SetName(request, L"Request support for " + title + L" on GitHub");
+        request.Click([link = request_link(d.request)](auto&&, auto&&) { ShellExecuteW(nullptr, L"open", link.c_str(), nullptr, nullptr, SW_SHOWNORMAL); });
+        ask.Children().Append(why); ask.Children().Append(request);
+        Grid::SetRow(ask, 4); layout.Children().Append(ask);
+        Border tile; tile.Width(204); tile.Height(262); tile.Padding(ThicknessHelper::FromLengths(18, 18, 18, 16)); tile.CornerRadius(CornerRadiusHelper::FromUniformRadius(8));
+        tile.Background(brush(0x121212, .82)); tile.BorderBrush(theme_brush(L"RuleBrush")); tile.BorderThickness(ThicknessHelper::FromUniformLength(1));
+        tile.Child(layout); tile.Opacity(dim);
+        return tile;
+    }
+    void rebuild_devices() {
+        auto tiles = get<StackPanel>(L"DeviceTiles").Children();
+        tiles.Clear();
+        for (auto const& d : device_list) tiles.Append(device_tile(d));
+        show(L"DevicesEmpty", devices_known && device_list.empty());
+        show(L"DevicesScroll", !device_list.empty());
+    }
+    void read_devices(JsonObject const& m) {
+        device_list.clear();
+        if (m.HasKey(L"list")) for (auto value : m.GetNamedArray(L"list")) {
+            auto o = value.GetObject();
+            DeviceItem d{to_string(o.GetNamedString(L"address", L"")), std::wstring(o.GetNamedString(L"name", L"")), std::wstring(o.GetNamedString(L"displayName", L"")), std::wstring(o.GetNamedString(L"form", L"buds")),
+                std::wstring(o.GetNamedString(L"control", L"idle")), std::wstring(o.GetNamedString(L"request", L"")), o.GetNamedBoolean(L"supported", false), o.GetNamedBoolean(L"connected", false), o.GetNamedBoolean(L"ready", false)};
+            if (o.HasKey(L"batteries")) { auto b = o.GetNamedArray(L"batteries"); for (uint32_t i = 0; i < 3 && i < b.Size(); ++i) d.batteries[i] = static_cast<int>(b.GetNumberAt(i)); }
+            if (!d.address.empty()) device_list.push_back(std::move(d));
+        }
+        devices_known = true;
+        rebuild_devices();
+        // The open device was forgotten in Windows: back to Devices.
+        if (!device_address.empty() && !device_item(device_address)) {
+            models.erase(device_address); snapshots.erase(device_address);
+            if (drawer_open) close_drawer();
+            if (page == L"Eq") { if (guide) finish_guide(false); else leave_editor(); }
+            device_address.clear(); spectrum.set_device(L"");
+            navigate(L"Devices"); send_interest(window_visible);
+        } else if (page != L"Devices" && page != L"Settings") get<TextBlock>(L"TitleText").Text(current_title());
+    }
+    // Shows another device: its own EQs (as last left here, else from its library), then its latest report.
+    void switch_device(std::string const& address) {
+        if (address == device_address) return;
+        if (!device_address.empty()) models[device_address] = model;
+        device_address = address;
+        owner_ready = owner_library = false; pending_library.reset(); sent_library = {}; pushed_key.clear(); written_slots = {}; generation = 0; last_seen = 0; history.clear();
+        if (auto kept = models.find(address); kept != models.end()) model = kept->second;
+        else {
+            auto saved = earbud::load_library(bandwave::device_folder(earbud::data_folder(), address));
+            if (saved.profiles.empty()) { saved.profiles.push_back({1, L"Off", earbud::ProfileKind::Sony, 0, true, {}, 0}); saved.next_id = 2; } // until the device has been read: just Off
+            dusk::load_library(model, saved); library_imported = saved.imported;
+        }
+        model.editing = false;
+        set_battery(L"BatteryLeft", -1, false); set_battery(L"BatteryCase", -1, false); set_battery(L"BatteryRight", -1, false);
+        set_controls_live(false, false); show_status(false, false, L"idle");
+        rebuild_banks(); sync_pills(false); sync_eq();
+        if (auto* d = device_item(address)) { if (about_model) about_model.Text(d->display); spectrum.set_device(d->name); }
+        if (about_firmware) about_firmware.Text(L"—");
+        if (auto report = snapshots.find(address); report != snapshots.end()) { const auto text = report->second; owner_message(text); }
+    }
+    void open_device(std::string const& address) {
+        auto* d = device_item(address);
+        if (!d || !d->supported) return;
+        switch_device(address);
+        if (link) { JsonObject focus; focus.SetNamedValue(L"type", JsonValue::CreateStringValue(L"focus")); focus.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(address))); send_json(focus); }
+        navigate(L"Main");
+        send_interest(window_visible);
+    }
+    void go_devices() {
+        if (drawer_open) close_drawer();
+        navigate(L"Devices");
+        send_interest(window_visible);
+    }
+    // The title's one word of state. Windows' word for the link, or what is wrong with our channel;
+    // opening it says nothing for the first second.
+    void show_status(bool ready, bool linked, std::wstring const& control) {
+        status_opening = !ready && linked && control == L"opening";
+        const wchar_t* text = ready ? L"Connected" : !linked ? L"Not connected" : control == L"in_use" ? L"Controls in use by another app" : control == L"unavailable" ? L"Controls unavailable" : L"";
+        if (status_opening) {
+            if (!reading_timer) {
+                reading_timer = Dispatching::DispatcherQueue::GetForCurrentThread().CreateTimer(); reading_timer.IsRepeating(false); reading_timer.Interval(std::chrono::seconds(1));
+                reading_timer.Tick([this](auto&&, auto&&) { if (status_opening) get<TextBlock>(L"TitleState").Text(L"Reading…"); });
+            }
+            if (!reading_timer.IsRunning()) reading_timer.Start();
+            if (get<TextBlock>(L"TitleState").Text() != L"Reading…") get<TextBlock>(L"TitleState").Text(L"");
+        } else { if (reading_timer) reading_timer.Stop(); get<TextBlock>(L"TitleState").Text(text); }
+        auto* d = device_item(device_address);
+        const std::wstring noun = d && d->form == L"headphones" ? L"Headphones" : L"Earbuds";
+        get<TextBlock>(L"OfflineTitle").Text(linked && control == L"in_use" ? L"Controls in use by another app" : linked && control == L"unavailable" ? L"Controls unavailable" : noun + L" not connected");
+    }
+    // On Devices the main screen stays underneath for its waves alone: everything else on it is
+    // faded out and can't be touched, and the waves rest at half strength behind the tiles.
+    void devices_backdrop(bool on) {
+        auto main = get<Grid>(L"MainPage");
+        if (on && devices_hidden.empty()) {
+            for (auto const& child : main.Children())
+                if (auto element = child.try_as<FrameworkElement>(); element && element.Name() != L"Stage" && element.Name() != L"WaveChain") { devices_hidden.emplace_back(element, element.Name() == L"OfflineCard" ? -1.0 : element.Opacity()); element.Opacity(0); }
+            main.IsHitTestVisible(false);
+            get<UIElement>(L"WaveChain").Opacity(.5);
+        } else if (!on && !devices_hidden.empty()) {
+            for (auto& [element, opacity] : devices_hidden) element.Opacity(opacity < 0 ? (card_shown ? 1 : 0) : opacity);
+            devices_hidden.clear();
+            main.IsHitTestVisible(true);
+            get<UIElement>(L"WaveChain").Opacity(1);
+        }
+    }
     void navigate(std::wstring const& target_page) {
         if (target_page != L"Settings") end_preview_now();
         page = target_page;
+        const bool devices = page == L"Devices";
         apply_light();
-        show(L"MainPage", page == L"Main");
+        show(L"MainPage", page == L"Main" || devices);
+        devices_backdrop(devices);
+        show(L"DevicesPage", devices);
         show(L"EqPage", page == L"Eq");
         show(L"SettingsPage", page == L"Settings");
-        show(L"BackButton", page != L"Main");
-        show(L"SettingsButton", page != L"Settings");
-        show(L"TitleState", page != L"Settings");
-        get<TextBlock>(L"TitleText").Text(page == L"Settings" ? L"Settings" : L"WF-C710N");
+        show(L"BackButton", !devices); // from a device's screen it leads back to Devices
+        show(L"SettingsButton", page == L"Main" || page == L"Eq");
+        show(L"TitleState", page == L"Main" || page == L"Eq");
+        get<TextBlock>(L"TitleText").Text(page == L"Settings" ? std::wstring(L"Settings") : devices ? std::wstring(L"Bandwave") : current_title());
+        Automation::AutomationProperties::SetName(get<Button>(L"BackButton"), page == L"Main" ? L"Devices" : L"Back");
         root.UpdateLayout();
         sync_pills(false);
         if (page == L"Settings") layout_settings();
         layout_light();
         apply_curve_glow();
-        if (page == L"Main" && timer && animations) wake();
+        if ((page == L"Main" || devices) && timer && animations) wake();
     }
     void open_editor() {
         if (!controls_live && !render_review) return; // locked while disconnected (0.8.0)
@@ -2340,10 +2542,10 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         click(L"GuideCancelButton", [this] { finish_guide(false); });
         click(L"EditorNewButton",[this]{model.create();rebuild_banks();open_editor();});
         click(L"SettingsButton", [this] { navigate(L"Settings"); });
-        click(L"OfflineReconnect", [this] { reconnect(); });
+        click(L"DevicesBluetooth", [] { ShellExecuteW(nullptr, L"open", L"ms-settings:bluetooth", nullptr, nullptr, SW_SHOWNORMAL); });
         click(L"OfflineBluetooth", [] { ShellExecuteW(nullptr, L"open", L"ms-settings:bluetooth", nullptr, nullptr, SW_SHOWNORMAL); });
         click(L"UpdateButton", [this] { install_update(); });
-        click(L"BackButton", [this] { if (page == L"Eq") { if (guide) finish_guide(false); else leave_editor(); } else navigate(L"Main"); });
+        click(L"BackButton", [this] { if (page == L"Eq") { if (guide) finish_guide(false); else leave_editor(); } else if (page == L"Main") go_devices(); else navigate(L"Main"); });
         click(L"AllButton", [this] { open_drawer(); });
         click(L"EqAllButton", [this] { open_drawer(); });
         click(L"CloseDrawerButton", [this] { close_drawer(); });
@@ -2362,6 +2564,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             else if (args.Key() == Windows::System::VirtualKey::Escape && guide) { finish_guide(false); args.Handled(true); }
             else if (args.Key() == Windows::System::VirtualKey::Escape && page == L"Eq") { leave_editor(); args.Handled(true); }
             else if (args.Key() == Windows::System::VirtualKey::Escape && page == L"Settings") { navigate(L"Main"); args.Handled(true); }
+            else if (args.Key() == Windows::System::VirtualKey::Escape && page == L"Main") { go_devices(); args.Handled(true); }
         });
         click(L"EditorUndoButton", [this] { if (history.empty()) return; auto state = history.back(); history.pop_back(); restore(state); });
         get<MenuFlyoutItem>(L"ResetAction").Click([this](auto&&, auto&&) { push_history(-2); restore(opened); });
@@ -2393,16 +2596,13 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // ---------- Offscreen review exports ----------
     // ---------- Owner link ----------
     void load_saved_library() {
-        auto saved = earbud::load_library(earbud::data_folder());
-        if (saved.profiles.empty()) { // until the earbuds have been read: just Off, so nothing pretends to be real
-            saved.profiles.push_back({1, L"Off", earbud::ProfileKind::Sony, 0, true, {}, 0});
-            saved.next_id = 2;
-        }
-        dusk::load_library(model, saved);
-        library_imported = saved.imported;
+        // Nothing is shown as real until a device is opened: its own library loads then (switch_device).
+        earbud::Library none;
+        none.profiles.push_back({1, L"Off", earbud::ProfileKind::Sony, 0, true, {}, 0});
+        none.next_id = 2;
+        dusk::load_library(model, none);
         set_battery(L"BatteryLeft", -1, false); set_battery(L"BatteryCase", -1, false); set_battery(L"BatteryRight", -1, false);
         set_controls_live(false, false);
-        get<TextBlock>(L"TitleState").Text(L"Connecting…");
     }
     void start_owner_link() {
         if (render_review || link) return;
@@ -2421,7 +2621,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     std::string device_address; // the device on screen
     void send_interest(bool active) {
         JsonObject m; m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"view")); m.SetNamedValue(L"visible", JsonValue::CreateBooleanValue(active));
-        m.SetNamedValue(L"screen", JsonValue::CreateStringValue(L"device")); m.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(device_address)));
+        m.SetNamedValue(L"screen", JsonValue::CreateStringValue(page == L"Devices" ? L"devices" : L"device")); m.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(device_address)));
         window_visible = active; send_json(m);
     }
     bool window_visible = true;    void send_command(const wchar_t* op, int value, std::optional<dusk::Curve> curve = std::nullopt) {
@@ -2517,14 +2717,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (show_card == card_shown) return;
         card_shown = show_card;
         card.Visibility(show_card ? Visibility::Visible : Visibility::Collapsed);
-        card.Opacity(show_card ? 1 : 0);
+        card.Opacity(show_card && page != L"Devices" ? 1 : 0); // on Devices only the waves show through
     }
     int64_t last_seen = 0;
-    void reconnect() {
-        if (!link) return;
-        JsonObject m;
-        send_interest(true); // the owner opens the controls by itself once Windows has the device
-    }
     // While connected, an earbud with no reading isn't connected; the case has no reading once both
     // buds are out of it.
     void set_battery(const wchar_t* name, int percent, bool connected) {
@@ -2532,7 +2727,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         const bool bud = name != std::wstring(L"BatteryCase");
         const bool away = connected && bud && !known;
         auto text = get<TextBlock>((std::wstring(name) + L"Text").c_str());
-        text.Text(known ? std::to_wstring(percent) : away ? L"Disconnected" : L"—");
+        text.Text(known ? std::to_wstring(percent) : away ? L"Not connected" : L"—");
         text.FontSize(away ? 12 : 32);
         text.Height(43); text.TextAlignment(TextAlignment::Center); text.VerticalAlignment(VerticalAlignment::Center);
         text.Padding(ThicknessHelper::FromLengths(0, away ? 14 : 0, 0, 0));
@@ -2540,24 +2735,22 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         auto panel = get<FrameworkElement>(name);
         panel.Opacity(known && connected ? 1 : .55); // dimmed readings are the last known ones
         const std::wstring label = std::wstring(name == std::wstring(L"BatteryCase") ? L"Case battery" : name == std::wstring(L"BatteryLeft") ? L"Left earbud battery" : L"Right earbud battery");
-        Automation::AutomationProperties::SetName(panel, known ? label + L" " + std::to_wstring(percent) + L" percent" : away ? label + L", earbud disconnected" : label + L" unknown");
+        Automation::AutomationProperties::SetName(panel, known ? label + L" " + std::to_wstring(percent) + L" percent" : away ? label + L", earbud not connected" : label + L" unknown");
     }
     void owner_message(std::string const& text) {
         JsonObject m{nullptr};
         if (!JsonObject::TryParse(to_hstring(text), m)) return;
         const std::wstring type{m.GetNamedString(L"type", L"")};
         if (type == L"show") { from_tray(); return; }
-        // The paired Sony devices. Until the Devices screen exists, this window shows the one the owner names.
-        if (type == L"devices") {
-            const auto shown = to_string(m.GetNamedString(L"shown", L""));
-            if (shown != device_address) { device_address = shown; send_interest(window_visible); }
-            if (!shown.empty() && m.GetNamedString(L"focused", L"").empty()) { JsonObject f; f.SetNamedValue(L"type", JsonValue::CreateStringValue(L"focus")); f.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(shown))); send_json(f); }
-            return;
-        }
+        if (type == L"devices") { read_devices(m); return; }
         if (type != L"snapshot") return;
-        if (to_string(m.GetNamedString(L"address", L"")) != device_address) return;        const bool ready = m.GetNamedBoolean(L"ready", false) && m.GetNamedBoolean(L"fresh", false);
+        // Every device's latest report is kept, so opening a device shows it at once.
+        const auto reported = to_string(m.GetNamedString(L"address", L""));
+        if (reported.empty()) return;
+        snapshots[reported] = text;
+        if (reported != device_address) return;        const bool ready = m.GetNamedBoolean(L"ready", false) && m.GetNamedBoolean(L"fresh", false);
         generation = static_cast<uint32_t>(m.GetNamedNumber(L"generation", 0));
-        get<TextBlock>(L"TitleState").Text(ready ? L"Connected" : hstring(m.GetNamedString(L"status", L"Not connected")));
+        show_status(ready, m.GetNamedBoolean(L"connected", false), std::wstring(m.GetNamedString(L"control", L"idle")));
         if (ready) last_seen = static_cast<int64_t>(std::time(nullptr));
         else if (!last_seen) last_seen = static_cast<int64_t>(m.GetNamedNumber(L"checked", 0));
         set_controls_live(ready, !ready && !m.GetNamedBoolean(L"pending", false));
@@ -2667,6 +2860,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     }
 
     void set_review_state() {
+        get<TextBlock>(L"TitleState").Text(L"Connected");
         if (review_view == L"Ambient") set_noise(dusk::Noise::Ambient);
         if (review_view == L"Off") set_noise(dusk::Noise::Off);
         if (review_view == L"Bass") { pulse = {.95, .8, .5, .2, .08, .04, .02}; phase = .12; }
@@ -2689,6 +2883,16 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (review_view == L"GuidePaused") { open_editor(); enter_guide(); guide->choose(2); sync_guide(0); guide_silence_ms = 1000; guide_paused = true; apply_guide_pause(); }
         if (review_view == L"GuideCancelled") { start_guide_from_home(); finish_guide(false); model.select(1); open_editor(); }
         if (review_view == L"Settings") navigate(L"Settings");
+        // Devices: two of one model (one renamed, away) and two Sony models without a profile.
+        if (review_view == L"Devices" || review_view == L"DevicesOne" || review_view == L"DevicesEmpty") {
+            if (review_view != L"DevicesEmpty") device_list.push_back({"F0:00:00:00:00:01", L"WF-C710N", L"WF-C710N", L"buds", L"ready", L"", true, true, true, {82, 79, 61}});
+            if (review_view == L"Devices") {
+                device_list.push_back({"F0:00:00:00:00:02", L"Kanu's buds", L"WF-C710N", L"buds", L"idle", L"", true, false, false, {60, 80, 55}});
+                device_list.push_back({"F0:00:00:00:00:03", L"WH-1000XM5", L"WH-1000XM5", L"buds", L"idle", L"WH-1000XM5", false, true, false, {-1, -1, -1}});
+                device_list.push_back({"F0:00:00:00:00:04", L"WF-1000XM4", L"WF-1000XM4", L"buds", L"idle", L"WF-1000XM4", false, false, false, {-1, -1, -1}});
+            }
+            devices_known = true; rebuild_devices(); navigate(L"Devices");
+        }
         blend = 1;
         apply_light();
     }
