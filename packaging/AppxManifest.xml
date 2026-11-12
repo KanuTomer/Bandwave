@@ -9,7 +9,7 @@
   </Dependencies>
   <Applications>
     <Application Id="App" Executable="EarbudControls.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="Bandwave" Description="Controls for Sony WF-C710N earbuds" BackgroundColor="transparent" Square150x150Logo="Assets\Logo150.png" Square44x44Logo="Assets\Logo44.png"/>
+      <uap:VisualElements DisplayName="Bandwave" Description="Controls for Sony earbuds and headphones" BackgroundColor="transparent" Square150x150Logo="Assets\Logo150.png" Square44x44Logo="Assets\Logo44.png"/>
       <Extensions>
         <desktop:Extension Category="windows.startupTask" Executable="EarbudControls.exe" EntryPoint="Windows.FullTrustApplication"><desktop:StartupTask TaskId="SoundConnectStartup" Enabled="false" DisplayName="Bandwave"/></desktop:Extension>
         <com:Extension Category="windows.comServer"><com:ComServer><com:ExeServer Executable="EarbudControls.exe" Arguments="--provider" DisplayName="Bandwave"><com:Class Id="891E4D36-A7CB-423C-B150-96D9EB1071C7" DisplayName="Bandwave Widget"/></com:ExeServer></com:ComServer></com:Extension>
@@ -17,9 +17,9 @@
           <WidgetProvider>
             <ProviderIcons><Icon Path="Assets\StoreLogo.png"/></ProviderIcons>
             <Activation><CreateInstance ClassId="891E4D36-A7CB-423C-B150-96D9EB1071C7"/></Activation>
-            <Definitions><Definition Id="WF-C710N" DisplayName="WF-C710N" Description="Battery, sound mode and your six EQs" AllowMultiple="false" IsCustomizable="false">
+            <Definitions><Definition Id="WF-C710N" DisplayName="Bandwave" Description="Battery, sound mode and six EQs for your Sony device" AllowMultiple="true" IsCustomizable="true">
               <Capabilities><Capability><Size Name="small"/></Capability><Capability><Size Name="medium"/></Capability><Capability><Size Name="large"/></Capability></Capabilities>
-              <ThemeResources><Icons><Icon Path="Assets\StoreLogo.png"/></Icons><Screenshots><Screenshot Path="Assets\Preview.png" DisplayAltText="Illustrative preview of WF-C710N battery, sound modes and six EQs"/></Screenshots><DarkMode/><LightMode/></ThemeResources>
+              <ThemeResources><Icons><Icon Path="Assets\StoreLogo.png"/></Icons><Screenshots><Screenshot Path="Assets\Preview.png" DisplayAltText="Illustrative preview of battery, sound modes and six EQs"/></Screenshots><DarkMode/><LightMode/></ThemeResources>
             </Definition></Definitions>
           </WidgetProvider>
         </uap3:Properties></uap3:AppExtension></uap3:Extension>

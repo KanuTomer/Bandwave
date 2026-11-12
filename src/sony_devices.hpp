@@ -61,6 +61,15 @@ inline void merge(std::vector<PairedDevice>& list, PairedDevice device) {
     }
     list.push_back(std::move(device));
 }
+// Bluetooth switched off or the radio gone is not the same as nothing paired: callers keep what they know.
+inline bool has_radio() {
+    BLUETOOTH_FIND_RADIO_PARAMS params{sizeof(params)};
+    HANDLE radio{};
+    auto radios = BluetoothFindFirstRadio(&params, &radio);
+    if (!radios) return false;
+    CloseHandle(radio); BluetoothFindRadioClose(radios);
+    return true;
+}
 // Every paired Sony device, in the order Windows returns them. Empty when there is no radio.
 inline std::vector<PairedDevice> list_paired_sony() {
     std::vector<PairedDevice> list;

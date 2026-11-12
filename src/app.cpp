@@ -75,7 +75,9 @@ static std::string icon_data(const std::filesystem::path& path){
     auto bytes=read_file(path);if(bytes.empty())return {};
     return png_uri({reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size()});
 }
-struct WidgetRecord { WidgetSize size=WidgetSize::Medium;bool active{};std::string last_template; };
+// pinned: the one device this widget stays on (empty: it follows the app). shown: the device its
+// card was last drawn for, so a tap on a card drawn for another device is refused.
+struct WidgetRecord { WidgetSize size=WidgetSize::Medium;bool active{},customizing{};std::string last_template,pinned,shown; };
 // One paired Sony device the app supports: its control session, its own EQ library and folder.
 struct DeviceState {
     std::string address;std::wstring name;const bandwave::ModelProfile* profile{};
@@ -163,6 +165,8 @@ public:
 #else
         (void)fake_state;(void)fake_address;
 #endif
+        // Bluetooth switched off is not "everything forgotten": keep the devices, none of them connected.
+        if(!bandwave::has_radio()){auto kept=paired;for(auto& p:kept)p.connected=false;return kept;}
         return bandwave::list_paired_sony();
     }
     // Brings the list in line with Windows: a newly paired supported device gets a session and its
@@ -207,12 +211,30 @@ public:
     // A device's controls are wanted while something shows it: the app's Devices screen (every
     // device), its own screen, or a widget or the fallback editor (the focused device).
     void interest(){
-        bool widget=editor!=nullptr;for(auto& [id,record]:widgets)widget|=record.active;
-        auto* front=focused();
-        for(auto& [address,d]:devices)d->session->interest((app_visible&&(app_screen==L"devices"||address==app_address))||(widget&&d.get()==front));
+        std::set<DeviceState*> shown;
+        if(editor)shown.insert(focused());
+        for(auto& [id,record]:widgets)if(record.active)shown.insert(widget_target(record));
+        for(auto& [address,d]:devices)d->session->interest((app_visible&&(app_screen==L"devices"||address==app_address))||shown.count(d.get())>0);
+    }
+    // The device a widget shows: its own, while that device is still paired, else the one the app
+    // has open or last had open. A widget whose device was forgotten in Windows follows the app again.
+    DeviceState* widget_target(WidgetRecord& record){
+        if(!record.pinned.empty()){if(auto* d=device(record.pinned))return d;if(bandwave::has_radio()||!fake_scenario.empty())record.pinned.clear();}
+        return focused();
+    }
+    // The supported devices, as Windows' Customize menu lists them: the model's name, or the name
+    // Windows shows when two of one model are paired.
+    std::vector<std::pair<std::string,std::string>> widget_choices(){
+        std::vector<std::pair<std::string,std::string>> list;
+        for(auto& p:paired){
+            if(!p.profile||!device(p.address))continue;
+            bool twin=false;for(auto& other:paired)twin|=&other!=&p&&other.profile==p.profile;
+            list.emplace_back(p.address,winrt::to_string(twin?winrt::hstring(p.windows_name):winrt::hstring(p.profile->display_name)));
+        }
+        return list;
     }
     void recover(){
-        try{for(auto info:wp::WidgetManager::GetDefault().GetWidgetInfos()){auto context=info.WidgetContext();widgets[std::wstring(context.Id())].size=context.Size();}update_widgets(true);}
+        try{for(auto info:wp::WidgetManager::GetDefault().GetWidgetInfos()){auto context=info.WidgetContext();auto& record=widgets[std::wstring(context.Id())];record.size=context.Size();record.pinned=widget_pinned(std::wstring(info.CustomState()));}update_widgets(true);}
         catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}
     }
     void artwork(const Snapshot& state){
@@ -248,7 +270,30 @@ public:
         }
         return eqs;
     }
-    void update_widgets(bool force=false){auto* front=focused();auto s=front?front->session->snapshot():Snapshot{};artwork(s);auto eqs=front?widget_eqs(front->library,s):std::vector<WidgetEq>{};for(auto& [id,record]:widgets){if(!force&&!record.active)continue;try{auto card=make_card(s,record.size,eqs,icons);if(!force&&card==record.last_template)continue;wp::WidgetUpdateRequestOptions update(id);update.Template(winrt::to_hstring(card));update.Data(L"{}");wp::WidgetManager::GetDefault().UpdateWidget(update);record.last_template=std::move(card);}catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}}}
+    void update_widgets(bool force=false){
+        const auto choices=widget_choices();
+        for(auto& [id,record]:widgets){
+            if(!force&&!record.active)continue;
+            try{
+                std::string card;
+                auto* target=widget_target(record);
+                if(record.customizing){
+                    std::vector<std::string> names;int selected=-1;
+                    for(size_t i=0;i<choices.size();++i){names.push_back(choices[i].second);if(choices[i].first==record.pinned)selected=static_cast<int>(i);}
+                    card=make_customize_card(record.size,names,selected);
+                }else if(!target){card=make_empty_card(record.size);record.shown.clear();}
+                else{
+                    auto s=target->session->snapshot();artwork(s);
+                    std::string name;if(choices.size()>1)for(auto& [address,title]:choices)if(address==target->address)name=title; // named only when there is more than one
+                    card=make_card(s,record.size,widget_eqs(target->library,s),icons,name);record.shown=target->address;
+                }
+                if(!force&&card==record.last_template)continue;
+                wp::WidgetUpdateRequestOptions update(id);update.Template(winrt::to_hstring(card));update.Data(L"{}");
+                update.CustomState(widget_state_text(record.pinned));
+                wp::WidgetManager::GetDefault().UpdateWidget(update);record.last_template=std::move(card);
+            }catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}
+        }
+    }
     void changed(){
         for(auto& [address,d]:devices){
             auto state=d->session->snapshot();sync_library(*d,state);send_snapshot(*d,state);
@@ -280,8 +325,22 @@ public:
     void action(const std::wstring& id,const std::wstring& verb){
         auto widget=widgets.find(id);if(widget==widgets.end())return;
         if(!widget_action_allowed(widget->second.size,verb))return;
-        widget->second.active=true;interest();
-        auto* front=focused();if(!front)return;
+        auto& record=widget->second;
+        record.active=true;
+        if(verb==L"open.app"){open(0);return;}
+        // Windows' Customize menu: follow the app, or stay on one of the supported devices.
+        if(verb.starts_with(L"customize.")){
+            if(!record.customizing)return; // a stale card
+            if(verb==L"customize.follow")record.pinned.clear();
+            else if(verb==L"customize.done")record.customizing=false;
+            else{const auto choices=widget_choices();const int index=suffix_number(verb,L"customize.device.");if(index<0||index>=static_cast<int>(choices.size()))return;record.pinned=choices[static_cast<size_t>(index)].first;}
+            record.last_template.clear();interest();update_widgets();return;
+        }
+        if(record.customizing)return;
+        interest();
+        // A card drawn for another device (the app moved on, or the device was forgotten) can't act on this one.
+        auto* front=widget_target(record);if(!front)return;
+        if(front->address!=record.shown){record.last_template.clear();update_widgets();return;}
         auto& library=front->library;auto& controller=front->session;
         auto state=controller->snapshot();
         if(auto id=suffix_number(verb,L"eq.profile.");id>0){
@@ -576,11 +635,11 @@ public:
 
 WidgetProvider::WidgetProvider(App& owner):app(owner){++app.references;app.post([&owner]{owner.provider_started=true;owner.recover();});}
 WidgetProvider::~WidgetProvider(){--app.references;app.post([owner=&app]{owner->maybe_exit();});}
-void WidgetProvider::CreateWidget(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{owner->widgets[id]={size,false};owner->update_widgets();});}
+void WidgetProvider::CreateWidget(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& record=owner->widgets[id];record=WidgetRecord{};record.size=size;owner->update_widgets(true);});}
 void WidgetProvider::DeleteWidget(winrt::hstring const& id,winrt::hstring const&){app.post([owner=&app,id=std::wstring(id)]{owner->widgets.erase(id);owner->interest();});}
 void WidgetProvider::OnActionInvoked(wp::WidgetActionInvokedArgs args){auto id=std::wstring(args.WidgetContext().Id());auto verb=std::wstring(args.Verb());app.post([owner=&app,id,verb]{owner->action(id,verb);});}
 void WidgetProvider::OnWidgetContextChanged(wp::WidgetContextChangedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{owner->widgets[id].size=size;owner->update_widgets();});}
-void WidgetProvider::OnCustomizationRequested(wp::WidgetCustomizationRequestedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{owner->widgets[id].size=size;owner->open(0);});} // customizing happens in the app
+void WidgetProvider::OnCustomizationRequested(wp::WidgetCustomizationRequestedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& record=owner->widgets[id];record.size=size;record.active=true;record.customizing=true;owner->refresh_devices();owner->update_widgets();});} // this widget follows the app, or stays on one device
 void WidgetProvider::Activate(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& widget=owner->widgets[id];widget.size=size;const bool was=widget.active;widget.active=true;if(!was)owner->refresh_devices();owner->interest();owner->update_widgets();});}
 void WidgetProvider::Deactivate(winrt::hstring id){app.post([owner=&app,id=std::wstring(id)]{auto found=owner->widgets.find(id);if(found!=owner->widgets.end())found->second.active=false;owner->interest();});}
 

@@ -61,7 +61,8 @@ static std::string icon_button(const WidgetIcons& icons,const char* name,const s
     return col({tile({glyph(icons,name,16)},size,action(verb,label,enabled),0,0,surface)},std::to_string(size)+"px",size);
 }
 }
-static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector<WidgetEq>& eqs={},const WidgetIcons& icons={}){
+// `name`: the device's name, given only when more than one supported device is paired.
+static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector<WidgetEq>& eqs={},const WidgetIcons& icons={},const std::string& name={}){
     using namespace card;
     const bool compact=size==WidgetSize::Small,expanded=size==WidgetSize::Large,enabled=s.ready&&s.fresh&&!s.pending;
     Items body;
@@ -81,6 +82,7 @@ static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector
             tiles.push_back(col({tile(inner,height,action(verbs[i],std::string(mode_name(modes[i]))+(selected?", selected":""),available),4,8)}));
         }return columns(tiles,height);
     };
+    if(!compact&&!name.empty())add(columns({col({text(name,"Small",false,true,"Left",1)},"stretch",20)},20));
     const char* battery_names[]={"Left","Right","Case"};Items cells;
     for(int i=0;i<3;++i){
         // While connected, an earbud with no reading isn't connected; say so calmly, not as an alarm.
@@ -88,7 +90,7 @@ static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector
         if(i)cells.push_back(pad(compact?8:16));
         // Host typography scales with text size and follows high contrast.
         auto readout=text(reading,off?"Small":compact?"Default":expanded?"ExtraLarge":"Medium",!s.fresh||off,!off,"Left",1,low?"Attention":"Default");
-        auto described=std::string(battery_names[i])+(off?" earbud disconnected":" battery "+(valid?std::to_string(value)+"%":std::string("not reported"))+(low?", low":""));
+        auto described=std::string(battery_names[i])+(off?" earbud not connected":" battery "+(valid?std::to_string(value)+"%":std::string("not reported"))+(low?", low":""));
         if(compact)cells.push_back(col({box({text(battery_names[i],"Small",true)},16),readout},"stretch",36));
         else cells.push_back(col({box({text(battery_names[i],"Small",true)},16),gap(4),box({readout},expanded?36:24),gap(expanded?8:4),image(icons.batteries[i],80,3,described)},"stretch"));
     }
@@ -98,8 +100,8 @@ static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector
     auto status_row=[&](){return columns({col({text(status,"Small",true)},"stretch",16)},16);};
     if(compact){if(s.fresh)add(columns(cells,36));else add(box({status_row()},36));add(noise_tiles(),4);}
     else{
-        if(!healthy)add(status_row());
-        add(columns(cells),healthy?0:expanded?8:4);
+        if(!healthy)add(status_row(),name.empty()?0:4);
+        add(columns(cells),healthy?(name.empty()?0:8):expanded?8:4);
         add(noise_tiles(),expanded?20:12);
         // The six EQs on the app's main screen, in the app's order: three across on Medium, and on
         // Large two across in taller tiles with a heading, so the extra height is used.
@@ -112,5 +114,28 @@ static std::string make_card(const Snapshot& s,WidgetSize size,const std::vector
             add(columns(chips,chip),row?4:expanded?6:8);
         }
     }
+    return "{\"type\":\"AdaptiveCard\",\"version\":\"1.5\",\"$schema\":\"http://adaptivecards.io/schemas/adaptive-card.json\",\"body\":"+list(body)+"}";
+}
+// No supported Sony device is paired: nothing to show but the way into the app.
+static std::string make_empty_card(WidgetSize size){
+    using namespace card;
+    Items body{text("No supported Sony device is paired with this PC.","Small",true,false,"Left",3),gap(size==WidgetSize::Small?8:16),
+        tile({text("Open Bandwave","Small",false,false,"Center",1)},36,action("open.app","Open Bandwave"),8,8)};
+    return "{\"type\":\"AdaptiveCard\",\"version\":\"1.5\",\"$schema\":\"http://adaptivecards.io/schemas/adaptive-card.json\",\"body\":"+list(body)+"}";
+}
+// Windows' Customize menu: this widget follows the app, or stays on one device. `selected` is the
+// index into `devices`, or -1 for following.
+static std::string make_customize_card(WidgetSize size,const std::vector<std::string>& devices,int selected){
+    using namespace card;
+    const bool compact=size==WidgetSize::Small;const int row=compact?28:36;
+    Items body{text("Show on this widget","Small",true)};
+    auto choice=[&](const std::string& label,const std::string& verb,bool on){
+        body.push_back(gap(4));
+        body.push_back(tile({text(label,"Small",false,on,"Left",1,on?"Accent":"Default")},row,action(verb,label+(on?", selected":"")),12,compact?4:8));
+    };
+    choice("Follow Bandwave","customize.follow",selected<0);
+    for(size_t i=0;i<devices.size()&&i<16;++i)choice(devices[i],"customize.device."+std::to_string(i),selected==static_cast<int>(i));
+    body.push_back(gap(compact?6:12));
+    body.push_back(tile({text("Done","Small",false,true,"Center",1)},row,action("customize.done","Done"),12,compact?4:8));
     return "{\"type\":\"AdaptiveCard\",\"version\":\"1.5\",\"$schema\":\"http://adaptivecards.io/schemas/adaptive-card.json\",\"body\":"+list(body)+"}";
 }
