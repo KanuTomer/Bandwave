@@ -7,6 +7,10 @@
 #include "native_editor.hpp"
 #include "library.hpp"
 #include "ipc.hpp"
+#include "device_store.hpp"
+#ifdef BANDWAVE_DEV_FAKES
+#include "fake_devices.hpp"
+#endif
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.ApplicationModel.Activation.h>
 #include <winrt/Windows.Data.Json.h>
@@ -47,14 +51,12 @@ static std::string read_file(const std::filesystem::path& path) {
     if(!std::filesystem::exists(path,ec) || std::filesystem::file_size(path,ec)>65536) return {};
     std::ifstream input(path,std::ios::binary);return {std::istreambuf_iterator<char>(input),{}};
 }
-static Snapshot load_cache(const std::filesystem::path& path,bool& logging) {
+static Snapshot load_cache(const std::filesystem::path& path) {
     Snapshot s;
     try {
         auto text=read_file(path);if(text.empty())return s;
         auto json=JsonObject::Parse(winrt::to_hstring(text));
-        logging=json.GetNamedBoolean(L"logging",false);
         s.release_when_hidden=json.GetNamedBoolean(L"release_when_hidden",false);
-        s.address=winrt::to_string(json.GetNamedString(L"address",L""));
         s.firmware=winrt::to_string(json.GetNamedString(L"firmware",L""));
         s.checked=static_cast<int64_t>(json.GetNamedNumber(L"checked",0));
         s.noise=static_cast<int>(json.GetNamedNumber(L"noise",-1));
@@ -74,6 +76,15 @@ static std::string icon_data(const std::filesystem::path& path){
     return png_uri({reinterpret_cast<const uint8_t*>(bytes.data()),bytes.size()});
 }
 struct WidgetRecord { WidgetSize size=WidgetSize::Medium;bool active{};std::string last_template; };
+// One paired Sony device the app supports: its control session, its own EQ library and folder.
+struct DeviceState {
+    std::string address;std::wstring name;const bandwave::ModelProfile* profile{};
+    std::filesystem::path folder;
+    earbud::Library library;
+    bool import_requested{};
+    std::string saved,sent,logged; // last written to disk, sent to the app, and logged: repeats are skipped
+    std::unique_ptr<ControlSession> session; // last, so it stops before the rest goes
+};
 class App;
 struct WidgetProvider : winrt::implements<WidgetProvider,wp::IWidgetProvider,wp::IWidgetProvider2> {
     App& app;
@@ -91,7 +102,13 @@ struct WidgetProvider : winrt::implements<WidgetProvider,wp::IWidgetProvider,wp:
 class App {
 public:
     HWND dispatcher{},editor{};
-    std::unique_ptr<ControlSession> controller;
+    // Every paired Sony device as Windows has it, and a session for each one the app supports.
+    std::vector<bandwave::PairedDevice> paired;
+    std::map<std::string,std::unique_ptr<DeviceState>> devices;
+    bandwave::DeviceIndex index;
+    std::string fake_scenario,sent_devices;
+    // What the app is showing: the Devices screen, or one device's screen.
+    bool app_visible{},app_hello{};std::wstring app_screen;std::string app_address;
     std::atomic<int> references{};
     std::map<std::wstring,WidgetRecord> widgets;
     WidgetIcons icons;
@@ -112,15 +129,14 @@ public:
     std::unique_ptr<NativeEditor> native;
     // The app (EarbudControls.UI.exe) talks to this process over a second pipe (see ipc.hpp).
     // This process stays the only Bluetooth owner and the only writer of library.json.
-    earbud::Library library;
-    bool app_active{},import_requested{};
+
     std::atomic<bool> app_connected{};
     std::thread link_thread;
     std::mutex link_mutex;
     std::deque<std::string> outbox;
     HANDLE outbox_event=CreateEventW(nullptr,TRUE,FALSE,nullptr);
     App():folder(data_folder()){}
-    ~App(){if(power_notification)UnregisterSuspendResumeNotification(power_notification);if(interface_notification)UnregisterDeviceNotification(interface_notification);for(auto [radio,notice]:radio_notifications){if(notice)UnregisterDeviceNotification(notice);CloseHandle(radio);}SetEvent(stop_pipe);if(pipe_thread.joinable())pipe_thread.join();if(link_thread.joinable())link_thread.join();CloseHandle(outbox_event);native.reset();controller.reset();if(dispatcher)DestroyWindow(dispatcher);CloseHandle(stop_pipe);}
+    ~App(){if(power_notification)UnregisterSuspendResumeNotification(power_notification);if(interface_notification)UnregisterDeviceNotification(interface_notification);for(auto [radio,notice]:radio_notifications){if(notice)UnregisterDeviceNotification(notice);CloseHandle(radio);}SetEvent(stop_pipe);if(pipe_thread.joinable())pipe_thread.join();if(link_thread.joinable())link_thread.join();CloseHandle(outbox_event);native.reset();devices.clear();if(dispatcher)DestroyWindow(dispatcher);CloseHandle(stop_pipe);}
     void post(std::function<void()> fn){ {std::lock_guard lock(dispatch_mutex);tasks.push_back(std::move(fn));}PostMessageW(dispatcher,AppDispatchMessage,0,0); }
     void dispatch(){std::deque<std::function<void()>> work;{std::lock_guard lock(dispatch_mutex);work.swap(tasks);}for(auto& fn:work){try{fn();}catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}catch(const std::exception& e){diagnostic(e.what());}}}
     void diagnostic(const std::string& text){if(!logging)return;try{auto path=folder/L"diagnostics.log";std::error_code ec;bool reset=std::filesystem::exists(path,ec)&&std::filesystem::file_size(path,ec)>5*1024*1024;std::ofstream out(path,reset?std::ios::trunc:std::ios::app);out<<checked_time(std::time(nullptr))<<" "<<text.substr(0,2048)<<"\n";}catch(...){}}
@@ -130,13 +146,10 @@ public:
         WNDCLASSW wc{};wc.lpfnWndProc=window_proc;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"EarbudControls.Dispatcher";
         RegisterClassW(&wc);dispatcher=CreateWindowExW(0,wc.lpszClassName,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,wc.hInstance,this);
         if(!dispatcher)winrt::throw_last_error();
-        auto initial=load_cache(folder/L"state.json",logging);
-        library=earbud::load_library(folder);
         std::filesystem::create_directories(folder);
-        // Until the owner keeps a session per device: the remembered device, else the first supported one paired.
-        auto address=initial.address;const bandwave::ModelProfile* profile=bandwave::profile_by_id("wf-c710n");
-        for(auto& device:bandwave::list_paired_sony())if(device.profile&&(address.empty()||device.address==address)){address=device.address;profile=device.profile;break;}
-        controller=std::make_unique<ControlSession>(address,*profile,[this]{PostMessageW(dispatcher,StateMessage,0,0);},std::move(initial));
+        bandwave::migrate_legacy(folder);
+        index=bandwave::load_index(folder);logging=index.logging;
+        refresh_devices();
         power_notification=RegisterSuspendResumeNotification(dispatcher,DEVICE_NOTIFY_WINDOW_HANDLE);
         DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=GUID_BTHPORT_DEVICE_INTERFACE;
         interface_notification=RegisterDeviceNotificationW(dispatcher,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
@@ -144,7 +157,60 @@ public:
         if(show)open(0);
         SetTimer(dispatcher,1,30000,nullptr);
     }
-    void interest(){bool active=editor!=nullptr||app_active;for(auto& [id,widget]:widgets)active|=widget.active;controller->interest(active);}
+    std::vector<bandwave::PairedDevice> read_paired(Snapshot* fake_state=nullptr,const std::string& fake_address={}){
+#ifdef BANDWAVE_DEV_FAKES
+        if(!fake_scenario.empty()){std::vector<bandwave::PairedDevice> list;for(auto& fake:bandwave::fakes::scenario(fake_scenario)){if(fake_state&&fake.device.address==fake_address)*fake_state=fake.state;list.push_back(fake.device);}return list;}
+#else
+        (void)fake_state;(void)fake_address;
+#endif
+        return bandwave::list_paired_sony();
+    }
+    // Brings the list in line with Windows: a newly paired supported device gets a session and its
+    // own folder; one forgotten in Windows loses its session. Its files stay, so pairing it again
+    // brings its EQs back.
+    void refresh_devices(){
+        paired=read_paired();
+        bool remembered=false;
+        for(auto& d:paired){
+            if(!d.profile)if(auto* known=index.find(d.address))d.profile=bandwave::profile_by_id(known->model); // renamed in Windows since it was first seen
+            remembered|=index.remember(d.address,d.profile?std::string(d.profile->id):std::string(),d.windows_name);
+            if(!d.profile)continue;
+            if(auto* existing=device(d.address)){existing->name=d.windows_name;continue;}
+            auto state=std::make_unique<DeviceState>();
+            state->address=d.address;state->name=d.windows_name;state->profile=d.profile;
+            bandwave::adopt_unassigned(folder,d.address,d.profile->id);
+            state->folder=bandwave::device_folder(folder,d.address);
+            state->library=earbud::load_library(state->folder);
+            auto initial=load_cache(state->folder/L"state.json");initial.windows_connected=d.connected;
+            auto notify=[this]{PostMessageW(dispatcher,StateMessage,0,0);};
+#ifdef BANDWAVE_DEV_FAKES
+            if(!fake_scenario.empty()){Snapshot fake;read_paired(&fake,d.address);state->session=std::make_unique<ControlSession>(d.address,*d.profile,notify,std::move(initial),std::move(fake));}
+            else
+#endif
+            state->session=std::make_unique<ControlSession>(d.address,*d.profile,notify,std::move(initial));
+            devices.emplace(d.address,std::move(state));
+        }
+        std::erase_if(devices,[&](auto& entry){return std::none_of(paired.begin(),paired.end(),[&](auto& d){return d.address==entry.first;});});
+        if(!index.focused.empty()&&!device(index.focused)){index.focused.clear();remembered=true;}
+        if(remembered&&!bandwave::save_index(folder,index))diagnostic("Could not save the device list.");
+    }
+    DeviceState* device(const std::string& address){auto found=devices.find(address);return found==devices.end()?nullptr:found->second.get();}
+    // The device the widget and the fallback editor show: the one open, or last open, in the app.
+    // Until one has been opened: the first Windows has connected, else the first paired.
+    DeviceState* focused(){
+        if(auto* d=device(index.focused))return d;
+        for(auto& p:paired)if(p.profile&&p.connected)if(auto* d=device(p.address))return d;
+        for(auto& p:paired)if(p.profile)if(auto* d=device(p.address))return d;
+        return nullptr;
+    }
+    Snapshot focused_snapshot(){auto* d=focused();return d?d->session->snapshot():Snapshot{};}
+    // A device's controls are wanted while something shows it: the app's Devices screen (every
+    // device), its own screen, or a widget or the fallback editor (the focused device).
+    void interest(){
+        bool widget=editor!=nullptr;for(auto& [id,record]:widgets)widget|=record.active;
+        auto* front=focused();
+        for(auto& [address,d]:devices)d->session->interest((app_visible&&(app_screen==L"devices"||address==app_address))||(widget&&d.get()==front));
+    }
     void recover(){
         try{for(auto info:wp::WidgetManager::GetDefault().GetWidgetInfos()){auto context=info.WidgetContext();widgets[std::wstring(context.Id())].size=context.Size();}update_widgets(true);}
         catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}
@@ -169,7 +235,7 @@ public:
     }
     // The app's six main-screen EQs. One is marked when the earbuds are playing it: its Sony
     // preset is selected, or Manual holds exactly its curve.
-    std::vector<WidgetEq> widget_eqs(const Snapshot& s){
+    std::vector<WidgetEq> widget_eqs(const earbud::Library& library,const Snapshot& s){
         std::vector<WidgetEq> eqs;
         for(auto id:library.main_screen()){
             auto const* p=library.find(id);if(!p)continue;
@@ -182,16 +248,18 @@ public:
         }
         return eqs;
     }
-    void update_widgets(bool force=false){auto s=controller->snapshot();artwork(s);auto eqs=widget_eqs(s);for(auto& [id,record]:widgets){if(!force&&!record.active)continue;try{auto card=make_card(s,record.size,eqs,icons);if(!force&&card==record.last_template)continue;wp::WidgetUpdateRequestOptions update(id);update.Template(winrt::to_hstring(card));update.Data(L"{}");wp::WidgetManager::GetDefault().UpdateWidget(update);record.last_template=std::move(card);}catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}}}
+    void update_widgets(bool force=false){auto* front=focused();auto s=front?front->session->snapshot():Snapshot{};artwork(s);auto eqs=front?widget_eqs(front->library,s):std::vector<WidgetEq>{};for(auto& [id,record]:widgets){if(!force&&!record.active)continue;try{auto card=make_card(s,record.size,eqs,icons);if(!force&&card==record.last_template)continue;wp::WidgetUpdateRequestOptions update(id);update.Template(winrt::to_hstring(card));update.Data(L"{}");wp::WidgetManager::GetDefault().UpdateWidget(update);record.last_template=std::move(card);}catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}}}
     void changed(){
-        auto state=controller->snapshot();sync_library(state);update_widgets();refresh_editor();send_snapshot(state);
-        if(state.checked&&!state.pending)save(state);
-        if(!state.error.empty())diagnostic(state.error);
-        maybe_exit();
+        for(auto& [address,d]:devices){
+            auto state=d->session->snapshot();sync_library(*d,state);send_snapshot(*d,state);
+            if(state.checked&&!state.pending)save(*d,state);
+            if(state.error!=d->logged){d->logged=state.error;if(!state.error.empty())diagnostic(state.error);}
+        }
+        send_devices();update_widgets();refresh_editor();maybe_exit();
     }
-    void save(const Snapshot& s){
-        try{JsonObject j;j.SetNamedValue(L"address",JsonValue::CreateStringValue(winrt::to_hstring(s.address)));j.SetNamedValue(L"firmware",JsonValue::CreateStringValue(winrt::to_hstring(s.firmware)));
-            j.SetNamedValue(L"logging",JsonValue::CreateBooleanValue(logging));j.SetNamedValue(L"checked",JsonValue::CreateNumberValue(static_cast<double>(s.checked)));
+    void save(DeviceState& d,const Snapshot& s){
+        try{JsonObject j;j.SetNamedValue(L"firmware",JsonValue::CreateStringValue(winrt::to_hstring(s.firmware)));
+            j.SetNamedValue(L"checked",JsonValue::CreateNumberValue(static_cast<double>(s.checked)));
             j.SetNamedValue(L"release_when_hidden",JsonValue::CreateBooleanValue(s.release_when_hidden));
             j.SetNamedValue(L"noise",JsonValue::CreateNumberValue(s.noise));j.SetNamedValue(L"ambient",JsonValue::CreateNumberValue(s.ambient));j.SetNamedValue(L"voice",JsonValue::CreateNumberValue(s.voice));
             j.SetNamedValue(L"noise_supported",JsonValue::CreateBooleanValue(s.noise_supported));j.SetNamedValue(L"ambient_supported",JsonValue::CreateBooleanValue(s.ambient_supported));j.SetNamedValue(L"eq_supported",JsonValue::CreateBooleanValue(s.eq_supported));
@@ -199,15 +267,22 @@ public:
             JsonArray bands;for(auto band:s.bands)bands.Append(JsonValue::CreateNumberValue(band));j.SetNamedValue(L"bands",bands);
             JsonArray presets;for(auto& [id,name]:s.presets){JsonObject preset;preset.SetNamedValue(L"id",JsonValue::CreateNumberValue(id));preset.SetNamedValue(L"name",JsonValue::CreateStringValue(winrt::to_hstring(name)));presets.Append(preset);}j.SetNamedValue(L"presets",presets);
             const wchar_t* keys[]={L"left",L"right",L"case"};for(int i=0;i<3;++i)j.SetNamedValue(keys[i],JsonValue::CreateNumberValue(s.batteries[i]));
-            auto temporary=folder/L"state.tmp";{std::ofstream out(temporary,std::ios::binary|std::ios::trunc);out<<winrt::to_string(j.Stringify());if(!out)throw std::runtime_error("Could not save settings.");}
-            if(!MoveFileExW(temporary.c_str(),(folder/L"state.json").c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH))winrt::throw_last_error();
+            auto text=winrt::to_string(j.Stringify());if(text==d.saved)return;
+            if(!earbud::write_atomic(d.folder/L"state.json",winrt::to_hstring(text)))throw std::runtime_error("Could not save the device's state.");
+            d.saved=std::move(text);
         }catch(const std::exception& e){diagnostic(e.what());}catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}
     }
-    void maybe_exit(){if(!editor && !app_connected && references==0 && (provider_started||editor_started) && !controller->snapshot().ready && !controller->snapshot().pending)PostQuitMessage(0);}
+    void maybe_exit(){
+        if(editor||app_connected||references!=0||!(provider_started||editor_started))return;
+        for(auto& [address,d]:devices){auto s=d->session->snapshot();if(s.ready||s.pending)return;}
+        PostQuitMessage(0);
+    }
     void action(const std::wstring& id,const std::wstring& verb){
         auto widget=widgets.find(id);if(widget==widgets.end())return;
         if(!widget_action_allowed(widget->second.size,verb))return;
         widget->second.active=true;interest();
+        auto* front=focused();if(!front)return;
+        auto& library=front->library;auto& controller=front->session;
         auto state=controller->snapshot();
         if(auto id=suffix_number(verb,L"eq.profile.");id>0){
             auto const* p=library.find(static_cast<uint32_t>(id));if(!p)return; // a removed EQ is never swapped for another
@@ -221,7 +296,7 @@ public:
     void open(int page){
         editor_started=true;
         // The Dusk app is its own process. If it is already connected, bring it forward.
-        if(app_connected){JsonObject show;show.SetNamedValue(L"type",JsonValue::CreateStringValue(L"show"));show.SetNamedValue(L"page",JsonValue::CreateNumberValue(page));send_app(show);return;}
+        if(app_connected){JsonObject show;show.SetNamedValue(L"type",JsonValue::CreateStringValue(L"show"));show.SetNamedValue(L"page",JsonValue::CreateNumberValue(page));show.SetNamedValue(L"screen",JsonValue::CreateStringValue(L"devices"));send_app(show);return;}
         wchar_t module[32768]{};auto count=GetModuleFileNameW(nullptr,module,32768);
         if(count&&count<32768){
             auto ui=std::filesystem::path(module).parent_path()/L"EarbudControls.UI.exe";
@@ -229,9 +304,9 @@ public:
             if(std::filesystem::exists(ui,ec)){auto args=start_in_tray?std::wstring(L"--tray"):L"--page="+std::to_wstring(page);start_in_tray=false;ShellExecuteW(nullptr,L"open",ui.c_str(),args.c_str(),nullptr,SW_SHOWNORMAL);return;}
         }
         if(native&&native->window){native->show(page);return;}
-        native=std::make_unique<NativeEditor>([this]{return controller->snapshot();},[this](Command command){controller->send(std::move(command));},
+        native=std::make_unique<NativeEditor>([this]{return focused_snapshot();},[this](Command command){if(auto* front=focused())front->session->send(std::move(command));},
             [this]{editor=nullptr;interest();post([this]{if(native&&!native->window)native.reset();maybe_exit();});},
-            [this]{return logging;},[this](bool enabled){logging=enabled;save(controller->snapshot());});
+            [this]{return logging;},[this](bool enabled){logging=index.logging=enabled;bandwave::save_index(folder,index);});
         editor=native->window;native->show(page);interest();
     }
     void refresh_editor(){if(native)native->refresh();}
@@ -242,18 +317,26 @@ public:
         do{DEV_BROADCAST_HANDLE filter{};filter.dbch_size=sizeof(filter);filter.dbch_devicetype=DBT_DEVTYP_HANDLE;filter.dbch_handle=radio;auto notice=RegisterDeviceNotificationW(dispatcher,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);radio_notifications.emplace_back(radio,notice);}while(BluetoothFindNextRadio(found,&radio));
         BluetoothFindRadioClose(found);
     }
-    bool remembered(BTH_ADDR value){
-        char address[18]{};snprintf(address,sizeof(address),"%02X:%02X:%02X:%02X:%02X:%02X",static_cast<unsigned>((value>>40)&255),static_cast<unsigned>((value>>32)&255),static_cast<unsigned>((value>>24)&255),static_cast<unsigned>((value>>16)&255),static_cast<unsigned>((value>>8)&255),static_cast<unsigned>(value&255));return controller->snapshot().address==address;
+    static std::string address_text(BTH_ADDR value){
+        char address[18]{};snprintf(address,sizeof(address),"%02X:%02X:%02X:%02X:%02X:%02X",static_cast<unsigned>((value>>40)&255),static_cast<unsigned>((value>>32)&255),static_cast<unsigned>((value>>24)&255),static_cast<unsigned>((value>>16)&255),static_cast<unsigned>((value>>8)&255),static_cast<unsigned>(value&255));return address;
+    }
+    // Windows connected or dropped a device. The device's own session hears about it; the list the
+    // app and the widget show follows at once.
+    void link_event(const std::string& address,bool connected){
+        bool known=false;for(auto& p:paired)if(p.address==address){known=true;p.connected=connected;}
+        if(!known){refresh_devices();if(!std::any_of(paired.begin(),paired.end(),[&](auto& p){return p.address==address;}))return;} // not one of Sony's
+        if(auto* d=device(address))d->session->lifecycle(connected?Operation::LinkUp:Operation::LinkDown);
+        interest();send_devices();update_widgets();
     }
     void device_event(WPARAM event,LPARAM data){
         if(!data)return;auto* header=reinterpret_cast<DEV_BROADCAST_HDR*>(data);
         if(event==DBT_CUSTOMEVENT&&header->dbch_devicetype==DBT_DEVTYP_HANDLE){
             auto* notification=reinterpret_cast<DEV_BROADCAST_HANDLE*>(data);
             if(header->dbch_size<offsetof(DEV_BROADCAST_HANDLE,dbch_data)+sizeof(BTH_HCI_EVENT_INFO))return;
-            if(notification->dbch_eventguid==GUID_BLUETOOTH_HCI_EVENT){BTH_HCI_EVENT_INFO info{};std::memcpy(&info,notification->dbch_data,sizeof(info));if(info.connectionType==HCI_CONNECTION_TYPE_ACL&&remembered(info.bthAddress))controller->lifecycle(info.connected?Operation::LinkUp:Operation::LinkDown);}
+            if(notification->dbch_eventguid==GUID_BLUETOOTH_HCI_EVENT){BTH_HCI_EVENT_INFO info{};std::memcpy(&info,notification->dbch_data,sizeof(info));if(info.connectionType==HCI_CONNECTION_TYPE_ACL)link_event(address_text(info.bthAddress),info.connected!=0);}
         }else if(header->dbch_devicetype==DBT_DEVTYP_DEVICEINTERFACE&&(event==DBT_DEVICEARRIVAL||event==DBT_DEVICEREMOVECOMPLETE)){
-            if(event==DBT_DEVICEREMOVECOMPLETE)controller->lifecycle(Operation::LinkDown);
-            watch_radios();
+            if(event==DBT_DEVICEREMOVECOMPLETE)for(auto& [address,d]:devices)d->session->lifecycle(Operation::LinkDown);
+            watch_radios();refresh_devices();interest();send_devices();update_widgets();
         }
     }
     void send_app(const JsonObject& message){
@@ -261,9 +344,42 @@ public:
         {std::lock_guard lock(link_mutex);if(outbox.size()>64)outbox.pop_front();outbox.push_back(earbud::ipc::frame(winrt::to_string(message.Stringify())));}
         SetEvent(outbox_event);
     }
-    void send_snapshot(const Snapshot& s){
-        if(!app_connected)return;
+    static JsonArray battery_list(const Snapshot& s){JsonArray list;for(int value:s.batteries)list.Append(JsonValue::CreateNumberValue(value));return list;}
+    // The Devices screen's list: every paired Sony device, supported or not, as Windows has it.
+    void send_devices(bool force=false){
+        if(!app_connected||!app_hello)return;
+        JsonObject j;j.SetNamedValue(L"type",JsonValue::CreateStringValue(L"devices"));
+        auto* front=focused();
+        j.SetNamedValue(L"focused",JsonValue::CreateStringValue(winrt::to_hstring(index.focused)));
+        j.SetNamedValue(L"shown",JsonValue::CreateStringValue(winrt::to_hstring(front?front->address:std::string())));
+        JsonArray list;
+        for(auto& p:paired){
+            JsonObject item;
+            item.SetNamedValue(L"address",JsonValue::CreateStringValue(winrt::to_hstring(p.address)));
+            item.SetNamedValue(L"name",JsonValue::CreateStringValue(p.windows_name));
+            item.SetNamedValue(L"model",JsonValue::CreateStringValue(winrt::to_hstring(p.profile?p.profile->id:std::string_view{})));
+            item.SetNamedValue(L"displayName",JsonValue::CreateStringValue(p.profile?winrt::hstring(p.profile->display_name):winrt::hstring(bandwave::model_part(p.windows_name))));
+            item.SetNamedValue(L"form",JsonValue::CreateStringValue(p.profile&&p.profile->form==bandwave::FormFactor::Headphones?L"headphones":L"buds"));
+            item.SetNamedValue(L"supported",JsonValue::CreateBooleanValue(p.profile!=nullptr));
+            item.SetNamedValue(L"connected",JsonValue::CreateBooleanValue(p.connected));
+            Snapshot s;if(auto* d=device(p.address))s=d->session->snapshot();
+            item.SetNamedValue(L"control",JsonValue::CreateStringValue(winrt::to_hstring(control_name(s.control))));
+            item.SetNamedValue(L"ready",JsonValue::CreateBooleanValue(s.ready&&s.fresh));
+            item.SetNamedValue(L"batteries",battery_list(s));
+            list.Append(item);
+        }
+        j.SetNamedValue(L"list",list);
+        auto text=winrt::to_string(j.Stringify());if(!force&&text==sent_devices)return;
+        sent_devices=text;send_app(j);
+    }
+    void send_snapshot(DeviceState& d,const Snapshot& s,bool force=false){
+        if(!app_connected||!app_hello)return;
+        auto& library=d.library;
         JsonObject j;
+        j.SetNamedValue(L"address",JsonValue::CreateStringValue(winrt::to_hstring(d.address)));
+        j.SetNamedValue(L"model",JsonValue::CreateStringValue(winrt::to_hstring(d.profile->id)));
+        j.SetNamedValue(L"control",JsonValue::CreateStringValue(winrt::to_hstring(control_name(s.control))));
+        j.SetNamedValue(L"connected",JsonValue::CreateBooleanValue(s.windows_connected||s.ready));
         auto number=[&](const wchar_t* key,double value){j.SetNamedValue(key,JsonValue::CreateNumberValue(value));};
         auto flag=[&](const wchar_t* key,bool value){j.SetNamedValue(key,JsonValue::CreateBooleanValue(value));};
         j.SetNamedValue(L"type",JsonValue::CreateStringValue(L"snapshot"));
@@ -283,12 +399,14 @@ public:
         JsonObject names;for(auto& [key,name]:s.setting_names)names.SetNamedValue(winrt::to_hstring(key),JsonValue::CreateStringValue(winrt::to_hstring(name)));j.SetNamedValue(L"setting_names",names);
         JsonArray devices;for(auto& name:s.devices)devices.Append(JsonValue::CreateStringValue(winrt::to_hstring(name)));j.SetNamedValue(L"devices",devices);
         flag(L"release_when_hidden",s.release_when_hidden);
-        send_app(j);
+        auto text=winrt::to_string(j.Stringify());if(!force&&text==d.sent)return;
+        d.sent=std::move(text);send_app(j);
     }
     // The library follows the earbuds: Sony presets come from the device with their real curves,
     // and on the first connection Custom 1 and Custom 2 are imported and kept in their slots.
-    void sync_library(const Snapshot& s){
+    void sync_library(DeviceState& d,const Snapshot& s){
         if(!s.ready||!s.eq_supported||s.presets.empty())return;
+        auto& library=d.library;
         bool dirty=false;
         auto sony=[](uint32_t id){return id!=MDR_EQ_CUSTOM&&id!=MDR_EQ_USER_1&&id!=MDR_EQ_USER_2;};
         if(library.profiles.empty()){
@@ -315,31 +433,54 @@ public:
                     library.profiles.insert(library.profiles.begin()+static_cast<std::ptrdiff_t>(at++),std::move(p));
                 }
                 library.imported=true;dirty=true;
-            }else if(!import_requested&&controller->send({Operation::ReadSlots})){import_requested=true;}
+            }else if(!d.import_requested&&d.session->send({Operation::ReadSlots})){d.import_requested=true;}
         }
-        if(dirty&&!earbud::save_library(folder,library))diagnostic("Could not save the EQ library.");
+        if(dirty&&!earbud::save_library(d.folder,library))diagnostic("Could not save the EQ library.");
     }
     void app_message(const std::string& text){
         JsonObject message{nullptr};
         if(!JsonObject::TryParse(winrt::to_hstring(text),message))return;
         const std::wstring type{message.GetNamedString(L"type",L"")};
-        if(type==L"hello"){send_snapshot(controller->snapshot());return;}
-        if(type==L"interest"){app_active=message.GetNamedBoolean(L"active",false);interest();return;}
+        // The app and this process ship together. A client that doesn't greet with this version is ignored.
+        if(type==L"hello"){
+            app_hello=static_cast<int>(message.GetNamedNumber(L"version",0))==earbud::ipc::kVersion;if(!app_hello)return;
+            refresh_devices();send_devices(true);
+            for(auto& [address,d]:devices)send_snapshot(*d,d->session->snapshot(),true);
+            return;
+        }
+        if(!app_hello)return;
+        const std::string address=winrt::to_string(message.GetNamedString(L"address",L""));
+        if(type==L"view"){
+            const bool was=app_visible;
+            app_visible=message.GetNamedBoolean(L"visible",false);app_screen=std::wstring(message.GetNamedString(L"screen",L"devices"));app_address=address;
+            if(app_visible&&!was)refresh_devices(); // a device forgotten or paired in Windows meanwhile
+            interest();send_devices();return;
+        }
+        // The app opened a device's screen: it becomes the one the widget follows.
+        if(type==L"focus"){
+            if(!device(address)||index.focused==address)return;
+            index.focused=address;if(!bandwave::save_index(folder,index))diagnostic("Could not save the device list.");
+            interest();send_devices();update_widgets();return;
+        }
+        auto* target=device(address);
         if(type==L"library"){
-            if(!message.HasKey(L"library")||message.GetNamedValue(L"library").ValueType()!=JsonValueType::Object)return;
+            if(!target||!message.HasKey(L"library")||message.GetNamedValue(L"library").ValueType()!=JsonValueType::Object)return;
             auto next=earbud::from_json(std::wstring(message.GetNamedObject(L"library").Stringify()));
             if(!next)return; // the owner never saves a library it can't validate
-            library=*next;if(!earbud::save_library(folder,library))diagnostic("Could not save the EQ library.");
+            target->library=*next;if(!earbud::save_library(target->folder,target->library))diagnostic("Could not save the EQ library.");
             update_widgets();return;
         }
         if(type!=L"command")return;
         const double id=message.GetNamedNumber(L"id",0);
-        auto state=controller->snapshot();
         JsonObject result;result.SetNamedValue(L"type",JsonValue::CreateStringValue(L"result"));result.SetNamedValue(L"id",JsonValue::CreateNumberValue(id));
+        result.SetNamedValue(L"address",JsonValue::CreateStringValue(winrt::to_hstring(address)));
         auto reply=[&](bool accepted){result.SetNamedValue(L"accepted",JsonValue::CreateBooleanValue(accepted));send_app(result);};
         const std::wstring op{message.GetNamedString(L"op",L"")};
-        // A command built against an earlier connection is refused, never replayed.
-        if(op!=L"retry"&&static_cast<uint32_t>(message.GetNamedNumber(L"generation",-1))!=state.connection_generation){reply(false);return;}
+        // A command for a device that isn't a paired, supported one is refused; so is one built
+        // against an earlier connection, which is never replayed.
+        if(!target){reply(false);return;}
+        auto& controller=target->session;
+        if(static_cast<uint32_t>(message.GetNamedNumber(L"generation",-1))!=controller->snapshot().connection_generation){reply(false);return;}
         const int value=static_cast<int>(message.GetNamedNumber(L"value",0));
         auto curve=[&](Command& command){
             if(!message.HasKey(L"bands"))return false;auto bands=message.GetNamedArray(L"bands");if(bands.Size()!=5)return false;
@@ -356,7 +497,7 @@ public:
         else if(op==L"setting"){command={Operation::Setting,value};command.key=winrt::to_string(message.GetNamedString(L"key",L""));}
         else if(op==L"power_off")command={Operation::PowerOff};
         else if(op==L"release_when_hidden"&&(value==0||value==1)){controller->release_when_hidden(value==1);reply(true);return;}
-        else if(op!=L"retry"){reply(false);return;}
+        else{reply(false);return;}
         reply(controller->send(std::move(command)));
     }
     void start_link(PSECURITY_DESCRIPTOR descriptor){
@@ -372,6 +513,7 @@ public:
                 if(error==ERROR_IO_PENDING){HANDLE waits[]={stop_pipe,read_event};ready=WaitForMultipleObjects(2,waits,FALSE,INFINITE)==WAIT_OBJECT_0+1;}
                 if(ready){
                     {std::lock_guard lock(link_mutex);outbox.clear();}ResetEvent(outbox_event);
+                    post([this]{app_hello=false;});
                     app_connected=true;
                     earbud::ipc::Reader reader;char buffer[4096];bool reading=false,alive=true;
                     while(alive){
@@ -390,7 +532,7 @@ public:
                         }else alive=false;
                     }
                     app_connected=false;
-                    post([this]{app_active=false;interest();maybe_exit();});
+                    post([this]{app_visible=false;app_hello=false;interest();maybe_exit();});
                 }
                 CancelIoEx(pipe,nullptr);DisconnectNamedPipe(pipe);CloseHandle(pipe);CloseHandle(read_event);
                 if(WaitForSingleObject(stop_pipe,0)==WAIT_OBJECT_0)return;
@@ -424,7 +566,7 @@ public:
             if(message==AppDispatchMessage){self->dispatch();return 0;}
             if(message==StateMessage){self->changed();return 0;}
             if(message==WM_DEVICECHANGE){self->device_event(wparam,lparam);return TRUE;}
-            if(message==WM_POWERBROADCAST){if(wparam==PBT_APMSUSPEND)self->controller->lifecycle(Operation::Suspend);else if(wparam==PBT_APMRESUMEAUTOMATIC||wparam==PBT_APMRESUMESUSPEND)self->controller->lifecycle(Operation::LinkUp);return TRUE;}
+            if(message==WM_POWERBROADCAST){if(wparam==PBT_APMSUSPEND||wparam==PBT_APMRESUMEAUTOMATIC||wparam==PBT_APMRESUMESUSPEND)for(auto& [address,d]:self->devices)d->session->lifecycle(wparam==PBT_APMSUSPEND?Operation::Suspend:Operation::LinkUp);return TRUE;}
             if(message==WM_TIMER&&window==self->dispatcher){KillTimer(window,1);self->maybe_exit();return 0;}
         }catch(const winrt::hresult_error& e){self->diagnostic(winrt::to_string(e.message()));}catch(const std::exception& e){self->diagnostic(e.what());}
         return DefWindowProcW(window,message,wparam,lparam);
@@ -438,7 +580,7 @@ void WidgetProvider::DeleteWidget(winrt::hstring const& id,winrt::hstring const&
 void WidgetProvider::OnActionInvoked(wp::WidgetActionInvokedArgs args){auto id=std::wstring(args.WidgetContext().Id());auto verb=std::wstring(args.Verb());app.post([owner=&app,id,verb]{owner->action(id,verb);});}
 void WidgetProvider::OnWidgetContextChanged(wp::WidgetContextChangedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{owner->widgets[id].size=size;owner->update_widgets();});}
 void WidgetProvider::OnCustomizationRequested(wp::WidgetCustomizationRequestedArgs args){auto context=args.WidgetContext();auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{owner->widgets[id].size=size;owner->open(0);});} // customizing happens in the app
-void WidgetProvider::Activate(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& widget=owner->widgets[id];widget.size=size;widget.active=true;owner->interest();owner->update_widgets();});}
+void WidgetProvider::Activate(wp::WidgetContext context){auto id=std::wstring(context.Id());auto size=context.Size();app.post([owner=&app,id,size]{auto& widget=owner->widgets[id];widget.size=size;const bool was=widget.active;widget.active=true;if(!was)owner->refresh_devices();owner->interest();owner->update_widgets();});}
 void WidgetProvider::Deactivate(winrt::hstring id){app.post([owner=&app,id=std::wstring(id)]{auto found=owner->widgets.find(id);if(found!=owner->widgets.end())found->second.active=false;owner->interest();});}
 
 struct ProviderFactory:winrt::implements<ProviderFactory,IClassFactory>{
@@ -467,7 +609,11 @@ int WINAPI wWinMain(HINSTANCE,HINSTANCE,PWSTR arguments,int){
             LocalFree(descriptor);CloseHandle(mutex);return 0;
         }
         {
-            App app;app.pipe_name=pipe;app.start_in_tray=startup;app.init(!provider);app.start_pipe(descriptor);
+            App app;app.pipe_name=pipe;app.start_in_tray=startup;
+#ifdef BANDWAVE_DEV_FAKES
+            if(auto* fake=wcsstr(arguments,L"--fake-devices=")){std::wstring name(fake+15);name=name.substr(0,name.find(L' '));app.fake_scenario=winrt::to_string(name);}
+#endif
+            app.init(!provider);app.start_pipe(descriptor);
             auto factory=winrt::make<ProviderFactory>(app);DWORD cookie{};
             winrt::check_hresult(CoRegisterClassObject(ProviderClsid,factory.get(),CLSCTX_LOCAL_SERVER,REGCLS_MULTIPLEUSE,&cookie));
             MSG msg{};while(GetMessageW(&msg,nullptr,0,0)>0){if(app.editor&&IsDialogMessageW(app.editor,&msg))continue;TranslateMessage(&msg);DispatchMessageW(&msg);}

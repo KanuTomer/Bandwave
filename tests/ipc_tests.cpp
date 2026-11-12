@@ -6,7 +6,7 @@ using namespace earbud::ipc;
 
 int main() {
     // Whole messages come back exactly, in order, however the bytes are split.
-    const std::string a = R"({"type":"hello","version":1})", b = R"({"type":"interest","active":true})";
+    const std::string a = R"({"type":"hello","version":2})", b = R"({"type":"view","visible":true,"screen":"devices","address":""})";
     const std::string stream = frame(a) + frame(b);
     for (size_t chunk : {1u, 3u, 7u, 1000u}) {
         Reader reader;

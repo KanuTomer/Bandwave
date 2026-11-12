@@ -66,7 +66,7 @@ private:
             { std::lock_guard lock(mutex_); outbox_.clear(); }
             connected_ = true;
             post_([this] { on_state_(true); });
-            send(R"({"type":"hello","version":1})");
+            send(R"({"type":"hello","version":2})");
             HANDLE read_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
             OVERLAPPED ov{};
             ipc::Reader reader;

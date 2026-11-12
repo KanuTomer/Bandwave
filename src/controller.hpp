@@ -68,7 +68,11 @@ struct Command { Operation operation; int value{}; std::vector<int32_t> bands; i
 // One device's controls: its own worker thread, queue, last-known state and release policy.
 class ControlSession {
 public:
-    ControlSession(std::string address, const bandwave::ModelProfile& profile, std::function<void()> notify, Snapshot initial={}) : state_(std::move(initial)), notify_(std::move(notify)), address_(std::move(address)), profile_(profile), worker_([this]{run();}) { state_.address=address_; state_.model=std::string(profile_.id); }
+    ControlSession(std::string address, const bandwave::ModelProfile& profile, std::function<void()> notify, Snapshot initial={}) : state_(std::move(initial)), notify_(std::move(notify)), address_(std::move(address)), profile_(profile), worker_([this]{run();}) { std::lock_guard lock(mutex_); state_.address=address_; state_.model=std::string(profile_.id); }
+#ifdef BANDWAVE_DEV_FAKES
+    // Development builds only: a session that plays back a canned device and never touches Bluetooth.
+    ControlSession(std::string address, const bandwave::ModelProfile& profile, std::function<void()> notify, Snapshot initial, Snapshot fake) : state_(std::move(initial)), notify_(std::move(notify)), address_(std::move(address)), profile_(profile), fake_(std::move(fake)), worker_([this]{run();}) { std::lock_guard lock(mutex_); state_.address=address_; state_.model=std::string(profile_.id); state_.windows_connected=fake_->windows_connected; }
+#endif
     ~ControlSession() { {std::lock_guard lock(mutex_); stopping_=true;} SetEvent(wake_); worker_.join();CloseHandle(wake_); }
     Snapshot snapshot() const { std::lock_guard lock(mutex_); return state_; }
     const std::string& address() const { return address_; }
@@ -112,6 +116,26 @@ private:
     bool requested_active_{}, stopping_{};
     const std::string address_;
     const bandwave::ModelProfile& profile_;
+#ifdef BANDWAVE_DEV_FAKES
+    std::optional<Snapshot> fake_;
+    void run_fake(){
+        for(;;){
+            std::optional<Command> command;
+            {std::unique_lock lock(mutex_);if(stopping_)break;if(!commands_.empty()){command=std::move(commands_.front());commands_.pop_front();}if(commands_.empty())ResetEvent(wake_);}
+            if(command)publish([&](Snapshot& s){
+                const auto generation=s.connection_generation;const bool release=s.release_when_hidden;
+                switch(command->operation){
+                case Operation::Activate:case Operation::Open:case Operation::LinkUp:if(!s.ready){auto library_state=*fake_;library_state.address=address_;library_state.model=std::string(profile_.id);library_state.release_when_hidden=release;library_state.connection_generation=generation+1;s=std::move(library_state);}break;
+                case Operation::Noise:s.noise=command->value;break;case Operation::Ambient:s.ambient=command->value;break;case Operation::Voice:s.voice=command->value;break;
+                case Operation::Preset:s.preset=static_cast<uint32_t>(command->value);if(auto c=s.curves.find(s.preset);c!=s.curves.end()){s.bands=c->second.first;s.bass=c->second.second;}break;
+                case Operation::ApplyProfile:s.preset=MDR_EQ_CUSTOM;s.bands=command->bands;s.bass=command->bass;break;
+                case Operation::Setting:if(s.settings.count(command->key))s.settings[command->key]=command->value;break;
+                default:break;}
+                s.pending=false;});
+            else WaitForSingleObject(wake_,INFINITE);
+        }
+    }
+#endif
     std::thread worker_;
 
     void publish(const std::function<void(Snapshot&)>& change) {
@@ -374,6 +398,9 @@ private:
     // Sony's devices take one controller at a time: a refused channel is held by another app.
     static bool refused(std::string_view error){return error.starts_with("In use")||error.find("10061")!=std::string_view::npos||error.find("refused")!=std::string_view::npos;}
     void run() {
+#ifdef BANDWAVE_DEV_FAKES
+        if(fake_){run_fake();return;}
+#endif
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         std::unique_ptr<Session> session;
         bool active=false,suspended=false;

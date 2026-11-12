@@ -1360,6 +1360,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"command"));
         m.SetNamedValue(L"id", JsonValue::CreateNumberValue(++request_id));
         m.SetNamedValue(L"generation", JsonValue::CreateNumberValue(generation));
+        m.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(device_address)));
         m.SetNamedValue(L"op", JsonValue::CreateStringValue(L"setting"));
         m.SetNamedValue(L"key", JsonValue::CreateStringValue(to_hstring(key)));
         m.SetNamedValue(L"value", JsonValue::CreateNumberValue(value));
@@ -2416,13 +2417,18 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             [this](bool connected) { if (connected) send_interest(true); else { owner_ready = false; get<TextBlock>(L"TitleState").Text(L"Starting…"); } });
     }
     void send_json(JsonObject const& message) { if (link) link->send(to_string(message.Stringify())); }
+    // What this window is showing, so the owner keeps that device's controls open.
+    std::string device_address; // the device on screen
     void send_interest(bool active) {
-        JsonObject m; m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"interest")); m.SetNamedValue(L"active", JsonValue::CreateBooleanValue(active)); send_json(m);
+        JsonObject m; m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"view")); m.SetNamedValue(L"visible", JsonValue::CreateBooleanValue(active));
+        m.SetNamedValue(L"screen", JsonValue::CreateStringValue(L"device")); m.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(device_address)));
+        window_visible = active; send_json(m);
     }
-    void send_command(const wchar_t* op, int value, std::optional<dusk::Curve> curve = std::nullopt) {
+    bool window_visible = true;    void send_command(const wchar_t* op, int value, std::optional<dusk::Curve> curve = std::nullopt) {
         if (!link || !owner_ready) return;
         JsonObject m;
         m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"command"));
+        m.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(device_address)));
         m.SetNamedValue(L"id", JsonValue::CreateNumberValue(++request_id));
         m.SetNamedValue(L"generation", JsonValue::CreateNumberValue(generation));
         m.SetNamedValue(L"op", JsonValue::CreateStringValue(op));
@@ -2452,7 +2458,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void send_library() {
         auto next = dusk::to_library(model, library_imported);
         if (next == sent_library) return;
-        JsonObject m; m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"library")); m.SetNamedValue(L"library", earbud::to_json(next));
+        JsonObject m; m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"library")); m.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(device_address))); m.SetNamedValue(L"library", earbud::to_json(next));
         send_json(m);
         // A slot that now holds a different EQ, or whose EQ changed, is rewritten once edits settle.
         for (size_t k = 0; k < 2; ++k) {
@@ -2517,11 +2523,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     void reconnect() {
         if (!link) return;
         JsonObject m;
-        m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"command"));
-        m.SetNamedValue(L"id", JsonValue::CreateNumberValue(++request_id));
-        m.SetNamedValue(L"op", JsonValue::CreateStringValue(L"retry"));
-        send_json(m);
-        get<TextBlock>(L"TitleState").Text(L"Connecting…");
+        send_interest(true); // the owner opens the controls by itself once Windows has the device
     }
     // While connected, an earbud with no reading isn't connected; the case has no reading once both
     // buds are out of it.
@@ -2545,8 +2547,15 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (!JsonObject::TryParse(to_hstring(text), m)) return;
         const std::wstring type{m.GetNamedString(L"type", L"")};
         if (type == L"show") { from_tray(); return; }
+        // The paired Sony devices. Until the Devices screen exists, this window shows the one the owner names.
+        if (type == L"devices") {
+            const auto shown = to_string(m.GetNamedString(L"shown", L""));
+            if (shown != device_address) { device_address = shown; send_interest(window_visible); }
+            if (!shown.empty() && m.GetNamedString(L"focused", L"").empty()) { JsonObject f; f.SetNamedValue(L"type", JsonValue::CreateStringValue(L"focus")); f.SetNamedValue(L"address", JsonValue::CreateStringValue(to_hstring(shown))); send_json(f); }
+            return;
+        }
         if (type != L"snapshot") return;
-        const bool ready = m.GetNamedBoolean(L"ready", false) && m.GetNamedBoolean(L"fresh", false);
+        if (to_string(m.GetNamedString(L"address", L"")) != device_address) return;        const bool ready = m.GetNamedBoolean(L"ready", false) && m.GetNamedBoolean(L"fresh", false);
         generation = static_cast<uint32_t>(m.GetNamedNumber(L"generation", 0));
         get<TextBlock>(L"TitleState").Text(ready ? L"Connected" : hstring(m.GetNamedString(L"status", L"Not connected")));
         if (ready) last_seen = static_cast<int64_t>(std::time(nullptr));
