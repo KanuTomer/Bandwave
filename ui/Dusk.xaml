@@ -297,8 +297,8 @@
     <Button x:Name="DevicesBluetooth" Content="Open Bluetooth settings" Height="36" Padding="16,0" HorizontalAlignment="Center"/>
    </StackPanel>
    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" Margin="0,0,0,28">
-    <Button x:Name="AppButton" Content="App and widget" Height="44" Padding="18,0"/>
-    <Button x:Name="DeveloperButton" Content="Developer options" Height="44" Padding="18,0"/>
+    <Button x:Name="AppButton" Content="App" Height="44" Padding="18,0"/>
+    <Button x:Name="WidgetButton" Content="Widget" Height="44" Padding="18,0"/>
     <Button x:Name="AppAboutButton" Content="About" Height="44" Padding="18,0"/>
    </StackPanel>
   </Grid>

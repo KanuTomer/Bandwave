@@ -18,8 +18,8 @@ widget again from Win + W afterwards.
   the tray Bandwave draws nothing at all.
 - **Fits your music:** the lines and the colour learn what you usually listen to, so quiet acoustic
   tracks move them as much as loud electronic ones, and every colour gets its turn: blue when the
-  vocals lead, red when the bass does. Choose **Calm**, **Balanced** or **Lively** in App and
-  widget, on the Devices screen.
+  vocals lead, red when the bass does. Choose **Calm**, **Balanced** or **Lively** in App, on the
+  Devices screen.
 - **See everything at a glance:** left, right and case batteries, and whether each earbud is
   connected. While the earbuds aren't connected, the controls and the EQ library rest, so nothing
   here drifts from what your phone may have changed on them.
@@ -53,7 +53,7 @@ widget again from Win + W afterwards.
   its own screen, settings and EQs. Pairing, connecting and forgetting stay in Windows Bluetooth
   settings. A Sony device Bandwave doesn't support yet is listed with **Request support**, which
   opens a GitHub issue for that model.
-- **Start with Windows and keep it in the tray,** if you like. Both are in App and widget, on the
+- **Start with Windows and keep it in the tray,** if you like. Both are in App, on the
   Devices screen.
 
 | The library | Editing an EQ | Hold to compare |
@@ -88,7 +88,7 @@ Setup also installs Microsoft's Windows App Runtime if your PC doesn't already h
 
 Bandwave checks for a new version once a day. When one is out, choose **Update** in the
 title bar: it downloads, checks the file's checksum and signature, and updates in place,
-keeping your EQs and settings. To look straight away, choose **Check now** in App and widget on the Devices
+keeping your EQs and settings. To look straight away, choose **Check now** in App on the Devices
 screen, where you can also turn the daily check off. Running a newer setup yourself works the
 same way. A copy from the Microsoft Store is updated by the Store instead.
 
