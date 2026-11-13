@@ -22,6 +22,7 @@ struct KnownDevice {
 struct DeviceIndex {
     std::string focused; // the device open, or last open, in the app; widgets follow it
     bool logging = false;
+    int release = -1; // "Let the phone app connect", for every device: 1 on, 0 off, -1 not set yet
     std::vector<KnownDevice> known;
     bool operator==(DeviceIndex const&) const = default;
 
@@ -63,6 +64,7 @@ inline std::wstring to_text(DeviceIndex const& index) {
     root.SetNamedValue(L"version", json::JsonValue::CreateNumberValue(1));
     root.SetNamedValue(L"focused", json::JsonValue::CreateStringValue(winrt::to_hstring(index.focused)));
     root.SetNamedValue(L"logging", json::JsonValue::CreateBooleanValue(index.logging));
+    if (index.release >= 0) root.SetNamedValue(L"releaseWhenHidden", json::JsonValue::CreateBooleanValue(index.release == 1));
     json::JsonArray known;
     for (auto const& d : index.known) {
         json::JsonObject item;
@@ -82,6 +84,7 @@ inline std::optional<DeviceIndex> index_from_text(std::wstring_view text) {
         index.focused = winrt::to_string(root.GetNamedString(L"focused", L""));
         if (!index.focused.empty() && !valid_address(index.focused)) index.focused.clear();
         index.logging = root.GetNamedBoolean(L"logging", false);
+        if (root.HasKey(L"releaseWhenHidden")) index.release = root.GetNamedBoolean(L"releaseWhenHidden", false) ? 1 : 0;
         if (root.HasKey(L"known")) {
             auto known = root.GetNamedArray(L"known");
             if (known.Size() > 64) return std::nullopt;
@@ -120,6 +123,7 @@ inline void migrate_legacy(std::filesystem::path const& root) {
     if (std::filesystem::exists(state, ec) && json::JsonObject::TryParse(earbud::read_text(state, 65536), old)) {
         address = winrt::to_string(old.GetNamedString(L"address", L""));
         index.logging = old.GetNamedBoolean(L"logging", false);
+        index.release = old.GetNamedBoolean(L"release_when_hidden", false) ? 1 : 0;
     }
     if (valid_address(address)) {
         const auto folder = device_folder(root, address);

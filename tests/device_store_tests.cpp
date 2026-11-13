@@ -28,7 +28,7 @@ int main() {
         CHECK(!index.remember("AA:BB:CC:DD:EE:01", "wf-c710n", L"WF-C710N"));
         CHECK(index.remember("AA:BB:CC:DD:EE:01", "", L"Kanu's buds") && index.find("AA:BB:CC:DD:EE:01")->model == "wf-c710n"); // a rename keeps the model
         CHECK(index.remember("AA:BB:CC:DD:EE:02", "", L"WH-1000XM5"));
-        index.focused = "AA:BB:CC:DD:EE:01"; index.logging = true;
+        index.focused = "AA:BB:CC:DD:EE:01"; index.logging = true; index.release = 1;
         auto again = index_from_text(to_text(index));
         CHECK(again && *again == index);
         CHECK(!index_from_text(L"") && !index_from_text(L"not json"));
@@ -44,7 +44,8 @@ int main() {
         CHECK(read(folder / L"state.json") == read(root / L"state.json") && read(folder / L"library.json") == R"({"version":1})");
         CHECK(fs::exists(root / L"state.json") && fs::exists(root / L"library.json"));
         auto index = load_index(root);
-        CHECK(index.focused == "14:06:A7:28:D4:6E" && index.logging && index.known.size() == 1 && index.known[0].model == "wf-c710n");
+        CHECK(index.focused == "14:06:A7:28:D4:6E" && index.logging && index.release == 0 && index.known.size() == 1 && index.known[0].model == "wf-c710n");
+        CHECK(index_from_text(LR"({"focused":""})")->release == -1); // not set before 0.10.1: taken from the devices
         // A second start changes nothing, even if the old files have since changed.
         write(folder / L"library.json", R"({"version":1,"edited":true})");
         migrate_legacy(root);

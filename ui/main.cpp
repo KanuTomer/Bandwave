@@ -273,6 +273,14 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         });
         try {
             Resources().MergedDictionaries().Append(XamlControlsResources());
+            // No drop shadow on flyouts and menus (owner, 13 Nov 2026): Windows draws it around the popup,
+            // outside the window, so it never showed in captures. Based on the default styles, so only that changes.
+            for (auto [type, base, shadow] : {std::tuple{xaml_typename<FlyoutPresenter>(), L"DefaultFlyoutPresenterStyle", FlyoutPresenter::IsDefaultShadowEnabledProperty()}, std::tuple{xaml_typename<MenuFlyoutPresenter>(), L"DefaultMenuFlyoutPresenterStyle", MenuFlyoutPresenter::IsDefaultShadowEnabledProperty()}}) {
+                Style style; style.TargetType(type);
+                if (auto found = Resources().TryLookup(box_value(base))) style.BasedOn(found.as<Style>()); else continue; // never replace a template we can't build on
+                style.Setters().Append(Setter(shadow, box_value(false)));
+                Resources().Insert(box_value(type), style);
+            }
             for (auto [key, rgb] : std::initializer_list<std::pair<const wchar_t*, unsigned>>{{L"SystemAccentColor", 0xF2F2F2}, {L"SystemAccentColorLight1", 0xFFFFFF}, {L"SystemAccentColorLight2", 0xF2F2F2}, {L"SystemAccentColorLight3", 0xFFFFFF}, {L"SystemAccentColorDark1", 0xD6D6D6}, {L"SystemAccentColorDark2", 0xB8B8B8}, {L"SystemAccentColorDark3", 0x9A9A9A}})
                 Resources().Insert(box_value(key), box_value(rgba(rgb)));
             std::wifstream file(directory / L"Dusk.xaml");
@@ -1521,9 +1529,6 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         attach_flyout(L"ConnectionsButton", [this](StackPanel const& panel) {
             connected_devices = make_value(L"—"); connected_devices.TextWrapping(TextWrapping::Wrap); connected_devices.MaxWidth(200);
             add_row(panel, L"Connected devices", L"What the earbuds are connected to right now.", connected_devices);
-            phone_switch = make_switch(L"Let the phone app connect", false);
-            phone_switch.Toggled([this](auto&&, auto&&) { if (!updating) send_command(L"release_when_hidden", phone_switch.IsOn() ? 1 : 0); });
-            add_row(panel, L"Let the phone app connect", L"This app steps aside 15 seconds after its window and widget close, so Sony's phone app can connect.", phone_switch);
         });
         build_app_flyouts();
     }
@@ -1580,7 +1585,6 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             setting.row.Visibility(offered ? Visibility::Visible : Visibility::Collapsed);
             if (offered && !settling && setting.show_value) setting.show_value(static_cast<int>(values.GetNamedNumber(name)));
         }
-        if (phone_switch) phone_switch.IsOn(m.GetNamedBoolean(L"release_when_hidden", false));
         updating = false;
         if (connected_devices) {
             std::wstring text; auto devices = m.GetNamedArray(L"devices", JsonArray());
@@ -1612,7 +1616,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     // For installs from outside the Microsoft Store and for people building the app: what Windows
     // needs before the widget appears, and how this copy was installed. Read afresh each time it
     // opens; nothing here changes Windows, the buttons only open its own pages.
-    int widgets_pinned = 0;
+    int widgets_pinned = 0; bool release_when_hidden = false;
     static bool developer_mode() {
         DWORD value = 0, size = sizeof(value);
         return RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock", L"AllowDevelopmentWithoutDevLicense", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS && value != 0;
@@ -1680,6 +1684,10 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             update_controls.Children().Append(check_now); update_controls.Children().Append(updates);
             add_row(panel, L"Check for updates", L"Once a day, from this project's GitHub releases, or now with Check now. Nothing about you is sent.", update_controls);
             }
+            // The app's, not a device's: it applies to every device (owner, 13 Nov 2026).
+            phone_switch = make_switch(L"Let the phone app connect", release_when_hidden);
+            phone_switch.Toggled([this](auto&&, auto&&) { if (updating) return; release_when_hidden = phone_switch.IsOn(); JsonObject m; m.SetNamedValue(L"type", JsonValue::CreateStringValue(L"setting")); m.SetNamedValue(L"key", JsonValue::CreateStringValue(L"release_when_hidden")); m.SetNamedValue(L"value", JsonValue::CreateNumberValue(release_when_hidden ? 1 : 0)); send_json(m); });
+            add_row(panel, L"Let the phone app connect", L"Bandwave steps aside 15 seconds after its window and widget close, so Sony's phone app can connect to your devices.", phone_switch);
             auto tray = make_switch(L"Keep running in the tray", earbud::updates::load_settings().tray);
             tray.Toggled([this, tray](auto&&, auto&&) { auto s = earbud::updates::load_settings(); s.tray = tray.IsOn(); earbud::updates::save_settings(s); if (s.tray) add_tray(); else remove_tray(); });
             add_row(panel, L"Keep running in the tray", L"Closing the window keeps Bandwave in the notification area. Quit from its menu there.", tray);
@@ -2286,6 +2294,13 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             tile.HorizontalContentAlignment(HorizontalAlignment::Stretch); tile.VerticalContentAlignment(VerticalAlignment::Stretch);
             tile.Background(brush(0x121212, .82)); tile.BorderBrush(theme_brush(L"RuleBrush")); tile.BorderThickness(ThicknessHelper::FromUniformLength(1));
             tile.Content(layout); tile.Opacity(dim);
+            // The Button template replaces Background with ButtonBackgroundPointerOver on hover: the app's
+            // #21FFFFFF is nearly clear, so the waves behind flashed through the glass. The tile keeps its own.
+            auto own = tile.Resources();
+            own.Insert(box_value(L"ButtonBackgroundPointerOver"), brush(0x1A1A1A, .86));
+            own.Insert(box_value(L"ButtonBackgroundPressed"), brush(0x101010, .86));
+            own.Insert(box_value(L"ButtonBorderBrushPointerOver"), brush(0xFFFFFF, .22));
+            own.Insert(box_value(L"ButtonBorderBrushPressed"), theme_brush(L"RuleBrush"));
             Automation::AutomationProperties::SetName(tile, title + L", " + device_status(d));
             tile.Click([this, address = d.address](auto&&, auto&&) { open_device(address); });
             return tile;
@@ -2321,6 +2336,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         }
         devices_known = true;
         widgets_pinned = static_cast<int>(m.GetNamedNumber(L"widgets", 0));
+        release_when_hidden = m.GetNamedBoolean(L"releaseWhenHidden", false);
+        if (phone_switch) { updating = true; phone_switch.IsOn(release_when_hidden); updating = false; }
         rebuild_devices();
         // The open device was forgotten in Windows: back to Devices.
         if (!device_address.empty() && !device_item(device_address)) {

@@ -19,6 +19,7 @@
 // App -> owner: {"type":"hello","version":2}
 //               {"type":"view","visible":bool,"screen":"devices|device","address":"AA:..|"}
 //               {"type":"focus","address":"AA:.."}      the app opened that device's screen
+//               {"type":"setting","key":"release_when_hidden","value":0|1}   the app's, for every device
 //               {"type":"command","id":n,"address":"AA:..","generation":g,"op":"...", ...}
 //               {"type":"library","address":"AA:..","library":{...}}   validated, then saved
 // A command or library for an address that isn't a paired, supported device is refused, and so is

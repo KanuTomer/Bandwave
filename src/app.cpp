@@ -152,6 +152,10 @@ public:
         bandwave::migrate_legacy(folder);
         index=bandwave::load_index(folder);logging=index.logging;
         refresh_devices();
+        // Before 0.10.1 each device kept its own "Let the phone app connect": the app's now, taken
+        // from any device that had it on.
+        if(index.release<0){bool on=false;for(auto& [address,d]:devices)on|=d->session->snapshot().release_when_hidden;index.release=on?1:0;bandwave::save_index(folder,index);}
+        for(auto& [address,d]:devices)d->session->release_when_hidden(index.release==1);
         power_notification=RegisterSuspendResumeNotification(dispatcher,DEVICE_NOTIFY_WINDOW_HANDLE);
         DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=GUID_BTHPORT_DEVICE_INTERFACE;
         interface_notification=RegisterDeviceNotificationW(dispatcher,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
@@ -192,6 +196,7 @@ public:
             else
 #endif
             state->session=std::make_unique<ControlSession>(d.address,*d.profile,notify,std::move(initial));
+            if(index.release>=0)state->session->release_when_hidden(index.release==1);
             devices.emplace(d.address,std::move(state));
         }
         std::erase_if(devices,[&](auto& entry){return std::none_of(paired.begin(),paired.end(),[&](auto& d){return d.address==entry.first;});});
@@ -431,6 +436,7 @@ public:
         }
         j.SetNamedValue(L"list",list);
         j.SetNamedValue(L"widgets",JsonValue::CreateNumberValue(static_cast<double>(widgets.size()))); // for the app's add-the-widget step
+        j.SetNamedValue(L"releaseWhenHidden",JsonValue::CreateBooleanValue(index.release==1));
         auto text=winrt::to_string(j.Stringify());if(!force&&text==sent_devices)return;
         sent_devices=text;send_app(j);
     }
@@ -518,6 +524,14 @@ public:
             if(app_visible&&!was)refresh_devices(); // a device forgotten or paired in Windows meanwhile
             interest();send_devices();return;
         }
+        // The app's own settings that the owner applies: "Let the phone app connect", for every device.
+        if(type==L"setting"){
+            if(message.GetNamedString(L"key",L"")!=L"release_when_hidden")return;
+            index.release=message.GetNamedNumber(L"value",0)==1?1:0;
+            if(!bandwave::save_index(folder,index))diagnostic("Could not save the device list.");
+            for(auto& [d_address,d]:devices)d->session->release_when_hidden(index.release==1);
+            send_devices();return;
+        }
         // The app opened a device's screen: it becomes the one the widget follows.
         if(type==L"focus"){
             if(!device(address)||index.focused==address)return;
@@ -558,7 +572,6 @@ public:
         else if(op==L"keep"&&(value==1||value==2)){command={Operation::KeepSlot,value==1?static_cast<int>(MDR_EQ_USER_1):static_cast<int>(MDR_EQ_USER_2)};if(!curve(command)){reply(false);return;}}
         else if(op==L"setting"){command={Operation::Setting,value};command.key=winrt::to_string(message.GetNamedString(L"key",L""));}
         else if(op==L"power_off")command={Operation::PowerOff};
-        else if(op==L"release_when_hidden"&&(value==0||value==1)){controller->release_when_hidden(value==1);reply(true);return;}
         else{reply(false);return;}
         reply(controller->send(std::move(command)));
     }
