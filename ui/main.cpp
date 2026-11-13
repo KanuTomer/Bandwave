@@ -3137,8 +3137,16 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 // composition, so the swap chains are in it), with demo music and sample batteries.
                 set_battery(L"BatteryLeft",82,true);set_battery(L"BatteryRight",79,true);set_battery(L"BatteryCase",61,true);set_controls_live(true,false);
                 animations=true;demo_music=true;glow_level=1;last_tick=precise_ms();
-                navigate(L"Main");set_noise(dusk::Noise::Ambient);
+                // Devices (0.10): the earbuds, and a Sony model not supported yet. Neutral names only: these are public.
+                device_list.clear();
+                device_list.push_back({"F0:00:00:00:00:01", L"WF-C710N", L"WF-C710N", L"buds", L"ready", L"", true, true, true, {82, 79, 61}}); device_list.back().noise = 2; device_list.back().eq = L"Warm evenings";
+                device_list.push_back({"F0:00:00:00:00:03", L"WH-1000XM5", L"WH-1000XM5", L"buds", L"idle", L"WH-1000XM5", false, true, false, {-1, -1, -1}});
+                devices_known = true; rebuild_devices();
+                navigate(L"Devices");set_noise(dusk::Noise::Ambient);
                 for(int i=0;i<150;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
+                capture_window(folder/L"readme-devices.bmp");
+                navigate(L"Main");
+                for(int i=0;i<60;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                 capture_window(folder/L"readme-main.bmp");
                 open_drawer();for(int i=0;i<70;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                 capture_window(folder/L"readme-library.bmp");
@@ -3153,7 +3161,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
                 navigate(L"Settings");root.UpdateLayout();layout_settings();
                 for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                 capture_window(folder/L"readme-settings.bmp");
-                // 0.8.0 review: the App and widget rows (Check now, Wave), then the Wave preview.
+                // The App rows (Check now, Wave), now on Devices, then the Wave preview.
+                navigate(L"Devices");root.UpdateLayout();
                 {auto app=get<Button>(L"AppButton");app.Flyout().ShowAt(app);
                  for(int i=0;i<30;++i){tick();timer.Stop();unpace();co_await resume_after(std::chrono::milliseconds(16));co_await ui;}
                  capture_window(folder/L"review-settings-app.bmp");
