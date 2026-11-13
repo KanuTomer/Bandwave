@@ -155,7 +155,7 @@ public:
         // Before 0.10.1 each device kept its own "Let the phone app connect": the app's now, taken
         // from any device that had it on.
         if(index.release<0){bool on=false;for(auto& [address,d]:devices)on|=d->session->snapshot().release_when_hidden;index.release=on?1:0;bandwave::save_index(folder,index);}
-        for(auto& [address,d]:devices)d->session->release_when_hidden(index.release==1);
+        for(auto& [address,d]:devices)if(d->session->snapshot().release_when_hidden!=(index.release==1))d->session->release_when_hidden(index.release==1);
         power_notification=RegisterSuspendResumeNotification(dispatcher,DEVICE_NOTIFY_WINDOW_HANDLE);
         DEV_BROADCAST_DEVICEINTERFACE_W filter{};filter.dbcc_size=sizeof(filter);filter.dbcc_devicetype=DBT_DEVTYP_DEVICEINTERFACE;filter.dbcc_classguid=GUID_BTHPORT_DEVICE_INTERFACE;
         interface_notification=RegisterDeviceNotificationW(dispatcher,&filter,DEVICE_NOTIFY_WINDOW_HANDLE);
@@ -190,13 +190,13 @@ public:
             state->folder=bandwave::device_folder(folder,d.address);
             state->library=earbud::load_library(state->folder);
             auto initial=load_cache(state->folder/L"state.json");initial.windows_connected=d.connected;
+            if(index.release>=0)initial.release_when_hidden=index.release==1; // the app's setting, from the start
             auto notify=[this]{PostMessageW(dispatcher,StateMessage,0,0);};
 #ifdef BANDWAVE_DEV_FAKES
             if(!fake_scenario.empty()){Snapshot fake;read_paired(&fake,d.address);state->session=std::make_unique<ControlSession>(d.address,*d.profile,notify,std::move(initial),std::move(fake));}
             else
 #endif
             state->session=std::make_unique<ControlSession>(d.address,*d.profile,notify,std::move(initial));
-            if(index.release>=0)state->session->release_when_hidden(index.release==1);
             devices.emplace(d.address,std::move(state));
         }
         std::erase_if(devices,[&](auto& entry){return std::none_of(paired.begin(),paired.end(),[&](auto& d){return d.address==entry.first;});});
@@ -323,8 +323,12 @@ public:
             d.saved=std::move(text);
         }catch(const std::exception& e){diagnostic(e.what());}catch(const winrt::hresult_error& e){diagnostic(winrt::to_string(e.message()));}
     }
+    // Until the app has connected once, or the first 30 seconds are over, nothing ends this process:
+    // a state change while the app is still starting must not close it under the app (0.10.1 did).
+    bool starting=true,app_seen=false;
     void maybe_exit(){
         if(editor||app_connected||references!=0||!(provider_started||editor_started))return;
+        if(starting&&!app_seen)return;
         for(auto& [address,d]:devices){auto s=d->session->snapshot();if(s.ready||s.pending)return;}
         PostQuitMessage(0);
     }
@@ -588,7 +592,7 @@ public:
                 if(error==ERROR_IO_PENDING){HANDLE waits[]={stop_pipe,read_event};ready=WaitForMultipleObjects(2,waits,FALSE,INFINITE)==WAIT_OBJECT_0+1;}
                 if(ready){
                     {std::lock_guard lock(link_mutex);outbox.clear();}ResetEvent(outbox_event);
-                    post([this]{app_hello=false;});
+                    post([this]{app_hello=false;app_seen=true;});
                     app_connected=true;
                     earbud::ipc::Reader reader;char buffer[4096];bool reading=false,alive=true;
                     while(alive){
@@ -642,7 +646,7 @@ public:
             if(message==StateMessage){self->changed();return 0;}
             if(message==WM_DEVICECHANGE){self->device_event(wparam,lparam);return TRUE;}
             if(message==WM_POWERBROADCAST){if(wparam==PBT_APMSUSPEND||wparam==PBT_APMRESUMEAUTOMATIC||wparam==PBT_APMRESUMESUSPEND)for(auto& [address,d]:self->devices)d->session->lifecycle(wparam==PBT_APMSUSPEND?Operation::Suspend:Operation::LinkUp);return TRUE;}
-            if(message==WM_TIMER&&window==self->dispatcher){KillTimer(window,1);self->maybe_exit();return 0;}
+            if(message==WM_TIMER&&window==self->dispatcher){KillTimer(window,1);self->starting=false;self->maybe_exit();return 0;}
         }catch(const winrt::hresult_error& e){self->diagnostic(winrt::to_string(e.message()));}catch(const std::exception& e){self->diagnostic(e.what());}
         return DefWindowProcW(window,message,wparam,lparam);
     }
