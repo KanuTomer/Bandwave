@@ -73,7 +73,7 @@ int main(int argc,char** argv){try{
             }
             expect(noise==3,"Every size exposes the three sound modes.");
             expect(card.find("Last seen")==std::string::npos&&card.find("\"retry\"")==std::string::npos,"The widget reports connection state without a manual retry.");
-            if(!pending)expect(card.find("Disconnected")!=std::string::npos,"Unreachable earbuds must read Disconnected.");
+            if(!pending)expect(card.find("Not connected")!=std::string::npos&&card.find("Disconnected")==std::string::npos&&card.find("Reconnect")==std::string::npos,"Unreachable earbuds must read Not connected, Windows' own word.");
         }
         auto card=make_card(live,size,eqs,icons);auto parsed=JsonObject::Parse(winrt::to_hstring(card));
         int choices=0,enabled=0;std::set<std::wstring> ids;
@@ -98,7 +98,46 @@ int main(int argc,char** argv){try{
     expect(!readout_colors.contains(L"Noise")&&!readout_colors.contains(L"cancelling")&&!readout_colors.contains(L"Ambient"),"Small mode buttons must contain icons only, with names retained on their actions.");
     expect(readout_colors.contains(L"Left")&&readout_colors.contains(L"Right")&&readout_colors.contains(L"Case"),"Small battery labels must be separate from the graphical readings.");
     expect(suffix_number(L"eq.profile.12",L"eq.profile.")==12&&suffix_number(L"eq.profile.99999999999",L"eq.profile.")<0,"EQ ids in actions are bounded.");
-    std::atomic<int> notifications{};{Controller controller([&]{++notifications;},live);expect(!controller.send({Operation::Noise,1})&&!controller.send({Operation::Retry}),"Inactive controls must reject hardware actions.");}
+    std::atomic<int> notifications{};{ControlSession controller("",*bandwave::profile_by_id("wf-c710n"),[&]{++notifications;},live);expect(!controller.send({Operation::Noise,1})&&!controller.send({Operation::Open}),"Inactive controls must reject hardware actions.");}
+    {   // Each device has its own lock, so one device's session never blocks another's; the probe uses the same name.
+        expect(transport_lock_name(L"S-1-5",  "AA:BB:CC:DD:EE:01")==L"Local\\EarbudControls.Transport.S-1-5.AABBCCDDEE01"&&transport_lock_name(L"S-1-5","AA:BB:CC:DD:EE:01")!=transport_lock_name(L"S-1-5","AA:BB:CC:DD:EE:02"),"The transport lock must be per device.");
+        // Status words: Windows' word for the link, or what is wrong with our channel. Never "Reconnecting" or "Disconnected".
+        Snapshot s;expect(std::string(status_word(s))=="Not connected","A device Windows has not connected is Not connected.");
+        s.windows_connected=true;expect(!*status_word(s),"A connected device with idle controls says nothing.");
+        s.control=ControlState::Opening;expect(std::string(status_word(s))=="Reading…","Opening the channel reads.");
+        s.control=ControlState::InUse;expect(std::string(status_word(s))=="Controls in use by another app","A refused channel is in use.");
+        s.control=ControlState::Unavailable;expect(std::string(status_word(s))=="Controls unavailable","A failed channel is unavailable.");
+        s.control=ControlState::Ready;s.ready=true;expect(!*status_word(s)&&std::string(control_name(s.control))=="ready","Ready controls say nothing.");
+        ControlSession other("AA:BB:CC:DD:EE:02",*bandwave::profile_by_id("wf-c710n"),[]{});expect(other.snapshot().address=="AA:BB:CC:DD:EE:02"&&other.snapshot().model=="wf-c710n"&&other.address()=="AA:BB:CC:DD:EE:02","A session belongs to one address and one profile.");
+    }
+    {   // A widget follows the app unless Windows' Customize menu set it to one device.
+        expect(widget_pinned(L"").empty()&&widget_pinned(L"follow").empty()&&widget_pinned(L"device:AA:BB:CC:DD:EE:01")=="AA:BB:CC:DD:EE:01","A widget's state names its device, or follows.");
+        expect(widget_pinned(L"device:aa:bb:cc:dd:ee:01").empty()&&widget_pinned(L"device:AA:BB").empty()&&widget_pinned(L"device:AA:BB:CC:DD:EE:01x").empty()&&widget_pinned(L"device:../../../../etc").empty(),"A malformed widget state follows the app.");
+        expect(widget_pinned(widget_state_text("AA:BB:CC:DD:EE:01"))=="AA:BB:CC:DD:EE:01"&&widget_state_text("")==L"follow","A widget's state survives a round trip.");
+        const std::vector<std::string> paired{"AA:BB:CC:DD:EE:01","AA:BB:CC:DD:EE:02"};
+        expect(widget_device("AA:BB:CC:DD:EE:02","AA:BB:CC:DD:EE:01",paired)=="AA:BB:CC:DD:EE:02","A pinned widget stays on its device.");
+        expect(widget_device("","AA:BB:CC:DD:EE:01",paired)=="AA:BB:CC:DD:EE:01","An unpinned widget follows the app.");
+        expect(widget_device("AA:BB:CC:DD:EE:09","AA:BB:CC:DD:EE:01",paired)=="AA:BB:CC:DD:EE:01","A widget whose device was forgotten follows the app.");
+        // Its cards: the Customize choices, the device's name when there are two, and nothing paired.
+        std::vector<std::wstring> verbs;
+        std::function<void(const JsonObject&)> walk=[&](const JsonObject& node){
+            if(node.HasKey(L"selectAction"))verbs.push_back(std::wstring(node.GetNamedObject(L"selectAction").GetNamedString(L"verb")));
+            for(auto key:{L"body",L"items",L"columns"})if(node.HasKey(key))for(auto child:node.GetNamedArray(key))walk(child.GetObject());
+        };
+        for(auto size:{WidgetSize::Small,WidgetSize::Medium,WidgetSize::Large}){
+            verbs.clear();auto customize=make_customize_card(size,{"WF-C710N","Kanu's buds"},1);walk(JsonObject::Parse(winrt::to_hstring(customize)));
+            expect(verbs==std::vector<std::wstring>{L"customize.follow",L"customize.device.0",L"customize.device.1",L"customize.done"},"Customize offers following the app, each device, and Done.");
+            for(auto& verb:verbs)expect(widget_action_allowed(size,verb),"Every Customize action must be one the provider accepts.");
+            expect(customize.find("Kanu's buds, selected")!=std::string::npos&&customize.find("Follow Bandwave, selected")==std::string::npos,"Customize marks the widget's own device.");
+            verbs.clear();walk(JsonObject::Parse(winrt::to_hstring(make_empty_card(size))));
+            expect(verbs==std::vector<std::wstring>{L"open.app"}&&widget_action_allowed(size,L"open.app"),"With nothing paired the widget only opens the app.");
+        }
+        expect(!widget_action_allowed(WidgetSize::Medium,L"customize.device.16")&&!widget_action_allowed(WidgetSize::Medium,L"customize.device.")&&!widget_action_allowed(WidgetSize::Medium,L"customize.device.-1")&&!widget_action_allowed(WidgetSize::Medium,L"customize.pin"),"Malformed Customize verbs must be refused.");
+        Snapshot ready;ready.ready=ready.fresh=true;ready.control=ControlState::Ready;ready.windows_connected=true;ready.batteries={80,70,60};
+        expect(make_card(ready,WidgetSize::Medium,{},{},"Kanu's buds").find("Kanu's buds")!=std::string::npos,"With two devices paired the widget names the one it shows.");
+        expect(make_card(ready,WidgetSize::Medium).find("WF-C710N")==std::string::npos,"With one device the widget shows no name.");
+        JsonObject::Parse(winrt::to_hstring(make_card(ready,WidgetSize::Large,{},{},"Kanu's buds")));
+    }
     expect(notifications==0,"An unused controller must produce no background updates.");
     std::cout<<"Passed: widget sizes, sound modes, six main-screen EQs, refused stale verbs, battery readings, inactive lifecycle.\n";return 0;
 }catch(const winrt::hresult_error& error){std::cerr<<winrt::to_string(error.message())<<"\n";return 1;}catch(const std::exception& error){std::cerr<<error.what()<<"\n";return 1;}}

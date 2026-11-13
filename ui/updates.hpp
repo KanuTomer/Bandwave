@@ -25,7 +25,7 @@
 #include "../src/library.hpp"
 
 namespace earbud::updates {
-inline constexpr wchar_t kLatest[] = L"https://api.github.com/repos/KanuTomer/Sound-Connect/releases/latest";
+inline constexpr wchar_t kLatest[] = L"https://api.github.com/repos/KanuTomer/Bandwave/releases/latest";
 inline constexpr wchar_t kThumbprint[] = L"458DC5875423917D74F77A536EBBB42720D1B67A";
 
 // The app's own preferences share this file: update checks, closing to the tray, how lively the
@@ -114,7 +114,7 @@ inline std::optional<Release> newer_release(winrt::hstring const& body, std::arr
     for (uint32_t i = 0; i < assets.Size(); ++i) {
         auto asset = assets.GetObjectAt(i);
         const std::wstring name{asset.GetNamedString(L"name", L"")}, url{asset.GetNamedString(L"browser_download_url", L"")};
-        if (!url.starts_with(L"https://github.com/KanuTomer/Sound-Connect/releases/download/")) continue;
+        if (!url.starts_with(L"https://github.com/KanuTomer/Bandwave/releases/download/")) continue;
         if (name == setup) release.setup_url = url;
         if (name == setup + L".sha256") release.sha_url = url;
     }

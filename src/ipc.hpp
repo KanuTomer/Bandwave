@@ -3,20 +3,33 @@
 // per-user, per-session, local-only named pipe. Each message is a 4-byte little-endian length and
 // that many bytes of UTF-8 JSON. Anything oversized or malformed ends the connection.
 //
-// Owner -> app: {"type":"snapshot", ...device state..., "library":{...}}
-//               {"type":"result","id":n,"accepted":bool}        a command was queued or refused
-//               {"type":"show"}                                  bring the window forward
-// App -> owner: {"type":"hello","version":1}
-//               {"type":"command","id":n,"generation":g,"op":"...", ...}
-//               {"type":"library","library":{...}}              the owner validates and saves it
-//               {"type":"interest","active":bool}               the window is open and visible
-#include <cstdint>
+// Version 2 (0.10.0): several devices. Every device message names its device by Bluetooth address,
+// which never leaves this PC. The app and the owner ship together, so the owner ignores a client
+// that doesn't greet with this version.
+//
+// Owner -> app: {"type":"devices","focused":"AA:..","shown":"AA:..","list":[{"address","name",
+//                 "model","displayName","form","supported","connected","control","ready",
+//                 "batteries":[l,r,c]}]}                 every paired Sony device, as Windows has it;
+//                                                        focused: open or last open in the app;
+//                                                        shown: what the widget shows
+//               {"type":"snapshot","address":"AA:..","model":"wf-c710n","control":"idle|opening|
+//                 ready|in_use|unavailable","connected":bool, ...device state..., "library":{...}}
+//               {"type":"result","id":n,"address":"AA:..","accepted":bool}
+//               {"type":"show","screen":"devices"}       bring the window forward
+// App -> owner: {"type":"hello","version":2}
+//               {"type":"view","visible":bool,"screen":"devices|device","address":"AA:..|"}
+//               {"type":"focus","address":"AA:.."}      the app opened that device's screen
+//               {"type":"setting","key":"release_when_hidden","value":0|1}   the app's, for every device
+//               {"type":"command","id":n,"address":"AA:..","generation":g,"op":"...", ...}
+//               {"type":"library","address":"AA:..","library":{...}}   validated, then saved
+// A command or library for an address that isn't a paired, supported device is refused, and so is
+// a command built against an earlier connection of that device.#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace earbud::ipc {
-inline constexpr int kVersion = 1;
+inline constexpr int kVersion = 2;
 inline constexpr uint32_t kMaxMessage = 256 * 1024;
 
 inline std::string frame(std::string_view json) {

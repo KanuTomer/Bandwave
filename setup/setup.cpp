@@ -199,7 +199,7 @@ static void register_entry(fs::path const& setup, uintmax_t bytes) {
     set_string(key, L"DisplayIcon", setup.wstring() + L",0");
     set_string(key, L"InstallLocation", setup.parent_path().wstring());
     set_string(key, L"UninstallString", L"\"" + setup.wstring() + L"\" /uninstall");
-    set_string(key, L"URLInfoAbout", L"https://github.com/KanuTomer/Sound-Connect");
+    set_string(key, L"URLInfoAbout", L"https://github.com/KanuTomer/Bandwave");
     DWORD one = 1, size = static_cast<DWORD>(bytes / 1024);
     RegSetValueExW(key, L"NoModify", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
     RegSetValueExW(key, L"NoRepair", 0, REG_DWORD, reinterpret_cast<const BYTE*>(&one), sizeof(one));
@@ -271,7 +271,7 @@ static int install() {
 
     if (quiet) { launch_app(*now); return 0; }
     if (ask(existing ? L"Bandwave is up to date" : old ? L"Sound Connect is now Bandwave" : L"Bandwave is installed",
-            (existing || old ? std::wstring(L"Version ") + kVersion + L". Your EQs and settings were kept." : std::wstring(L"Add the widget from Win + W > Add widgets > WF-C710N.")) + L"\n\nOpen Bandwave now?",
+            (existing || old ? std::wstring(L"Version ") + kVersion + L". Your EQs and settings were kept." : std::wstring(L"Add the widget from Win + W > Add widgets > Bandwave.")) + L"\n\nOpen Bandwave now?",
             TDCBF_YES_BUTTON | TDCBF_NO_BUTTON) == IDYES) launch_app(*now);
     return 0;
 }

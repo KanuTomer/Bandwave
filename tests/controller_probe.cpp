@@ -9,7 +9,7 @@ int main(){try{
     HANDLE changed=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!changed)winrt::throw_last_error();
     std::atomic<uint32_t> epoch{};
     {
-        Controller controller([&]{++epoch;SetEvent(changed);});
+        std::string address;const bandwave::ModelProfile* profile{};for(auto& device:bandwave::list_paired_sony())if(device.profile&&device.connected){address=device.address;profile=device.profile;break;}if(!profile)throw std::runtime_error("No supported Sony device is connected.");ControlSession controller(address,*profile,[&]{++epoch;SetEvent(changed);});
         auto wait=[&](uint32_t minimum){auto deadline=Clock::now()+12s;for(;;){auto s=controller.snapshot();if(epoch>=minimum&&s.ready&&!s.pending)return s;if(!s.error.empty())throw std::runtime_error(s.error);if(Clock::now()>=deadline)throw std::runtime_error("Read-only controller verification timed out.");WaitForSingleObject(changed,1000);}};
         controller.interest(true);auto initial=wait(4);
         controller.interest(false);Sleep(100);

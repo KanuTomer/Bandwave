@@ -24,7 +24,7 @@ public:
         wc.lpszClassName=L"EarbudControls.Page";RegisterClassW(&wc);
         viewport_=CreateWindowExW(WS_EX_CONTROLPARENT,wc.lpszClassName,L"",WS_CHILD|WS_VISIBLE|WS_VSCROLL|WS_CLIPCHILDREN,0,0,0,0,window,nullptr,wc.hInstance,this);
         theme();
-        add(L"STATIC",L"WF-C710N",10,24,18,-165,30);
+        add(L"STATIC",L"Bandwave",10,24,18,-165,30);
         add(L"STATIC",L"Connecting...",11,24,54,-48,24);
         add(L"STATIC",L"",12,24,82,-48,24);
         add(L"BUTTON",L"Retry",103,-126,18,102,34,WS_TABSTOP|BS_OWNERDRAW);
@@ -63,7 +63,7 @@ public:
         add(L"BUTTON",L"Enable diagnostic logging (maximum 5 MiB)",310,24,112,-48,40,WS_TABSTOP|BS_AUTOCHECKBOX,2);
         add(L"STATIC",L"Logging stays on this laptop. No audio is recorded.",612,24,158,-48,46,0,2);
         add(L"BUTTON",L"Windows Bluetooth settings",105,24,234,254,36,WS_TABSTOP|BS_OWNERDRAW,2);
-        add(L"STATIC",L"Add WF-C710N Controls from Win + W > Add widgets.\r\n\r\nClose these controls when finished. The earbud connection is released after 15 seconds of inactivity.",613,24,302,-48,130,0,2);
+        add(L"STATIC",L"Add the Bandwave widget from Win + W > Add widgets.\r\n\r\nClose these controls when finished. The earbud connection is released after 15 seconds of inactivity.",613,24,302,-48,130,0,2);
         theme();
         RECT work{};SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
         SetWindowPos(window,nullptr,0,0,std::min<int>(static_cast<int>(660*scale_),work.right-work.left-48),std::min<int>(static_cast<int>(840*scale_),work.bottom-work.top-48),SWP_NOMOVE|SWP_NOZORDER);
@@ -74,7 +74,7 @@ public:
     void refresh(){
         if(!window)return;
         auto s=read();
-        text(11,s.pending?(s.status=="Connecting..."?"Connecting...":"Applying..."):s.status);
+        text(11,s.pending&&s.control!=ControlState::Opening?"Applying...":s.ready?"Connected":status_word(s));
         text(12,battery_text(s));
         text(300,std::string("Noise control: ")+mode_name(s.noise)+(s.fresh?"":" (last checked)"));
         for(int id=100;id<=102;++id){EnableWindow(control(id),s.ready&&s.noise_supported&&!s.pending);InvalidateRect(control(id),nullptr,TRUE);}
@@ -100,7 +100,7 @@ public:
         if(s.ambient<1)text(401,"--");
         auto help=s.error.empty()?"Changes apply to the earbuds. Reset restores edits to the current preset.":s.error;
         text(419,help);
-        text(600,"Device: WF-C710N\r\nFirmware: "+(s.firmware.empty()?std::string("Not checked"):s.firmware)+"\r\nControls: "+s.status+"\r\n"+battery_text(s)+"\r\n"+checked_time(s.checked));
+        text(600,"Device: "+(s.model.empty()?std::string("None"):bandwave::profile_by_id(s.model)?winrt::to_string(bandwave::profile_by_id(s.model)->display_name):s.model)+"\r\nFirmware: "+(s.firmware.empty()?std::string("Not checked"):s.firmware)+"\r\nControls: "+std::string(s.ready?"Connected":status_word(s))+"\r\n"+battery_text(s)+"\r\n"+checked_time(s.checked));
         text(601,s.error.empty()?std::string("Noise control: ")+(s.noise_supported?"Available":"Not verified")+"\r\nAmbient sound: "+(s.ambient_supported?"Available":"Not verified")+"\r\nEqualizer: "+(s.eq_supported?"Available":"Not verified"):s.error+"\r\n\r\nIf the phone app is open, close it and select Retry.");
         SendMessageW(control(310),BM_SETCHECK,get_logging()?BST_CHECKED:BST_UNCHECKED,0);
         if(!s.ready)baseline_.reset();
@@ -173,7 +173,7 @@ private:
     void command(int id,int notification){
         if(id>=200&&id<=202){page_=id-200;scroll_=0;layout();return;}
         if(id>=100&&id<=102){send({Operation::Noise,id==100?1:id==101?2:0});return;}
-        if(id==103){send({Operation::Retry});return;}
+        if(id==103){send({Operation::Open});return;}
         if(id==104||id==105){ShellExecuteW(window,L"open",L"ms-settings:bluetooth",nullptr,nullptr,SW_SHOWNORMAL);return;}
         if(id==310){set_logging(SendMessageW(control(id),BM_GETCHECK,0,0)==BST_CHECKED);return;}
         if(id==410&&notification==CBN_SELCHANGE){auto index=SendMessageW(control(id),CB_GETCURSEL,0,0);if(index>=0&&static_cast<size_t>(index)<presets_.size()){baseline_.reset();send({Operation::Preset,static_cast<int>(presets_[static_cast<size_t>(index)].first)});}return;}
@@ -215,7 +215,7 @@ private:
             if(message==WM_SETTINGCHANGE){self->theme();self->layout();return 0;}
             if(message==WM_DPICHANGED){auto* rect=reinterpret_cast<RECT*>(lparam);SetWindowPos(hwnd,nullptr,rect->left,rect->top,rect->right-rect->left,rect->bottom-rect->top,SWP_NOZORDER);self->theme();self->layout();return 0;}
             if(message==WM_GETMINMAXINFO){auto* info=reinterpret_cast<MINMAXINFO*>(lparam);info->ptMinTrackSize={static_cast<LONG>(490*self->scale_),static_cast<LONG>(400*self->scale_)};return 0;}
-            if(message==WM_CLOSE&&hwnd==self->window){auto s=self->read();if((self->debounce_||(s.pending&&s.status!="Connecting..."))&&MessageBoxW(hwnd,L"A setting change is unresolved. Close controls anyway?",L"Earbud Controls",MB_YESNO|MB_ICONQUESTION)!=IDYES)return 0;
+            if(message==WM_CLOSE&&hwnd==self->window){auto s=self->read();if((self->debounce_||(s.pending&&s.control!=ControlState::Opening))&&MessageBoxW(hwnd,L"A setting change is unresolved. Close controls anyway?",L"Earbud Controls",MB_YESNO|MB_ICONQUESTION)!=IDYES)return 0;
                 KillTimer(hwnd,2);DestroyWindow(hwnd);self->window=nullptr;self->closed();return 0;}
         }catch(const std::exception& e){MessageBoxW(self->window,winrt::to_hstring(e.what()).c_str(),L"Earbud Controls",MB_ICONERROR);}catch(const winrt::hresult_error& e){MessageBoxW(self->window,e.message().c_str(),L"Earbud Controls",MB_ICONERROR);}
         return DefWindowProcW(hwnd,message,wparam,lparam);

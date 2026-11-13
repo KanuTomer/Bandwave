@@ -74,8 +74,8 @@
    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="138"/></Grid.ColumnDefinitions>
    <Button x:Name="BackButton" Width="44" Height="44" Background="Transparent" Visibility="Collapsed" AutomationProperties.Name="Back" CornerRadius="0"><FontIcon Glyph="&#xE72B;" FontSize="14"/></Button>
    <StackPanel x:Name="TitleDrag" Grid.Column="1" Orientation="Horizontal" Spacing="12" Background="Transparent" Padding="20,0,0,0">
-    <TextBlock x:Name="TitleText" Text="WF-C710N" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
-    <TextBlock x:Name="TitleState" Text="Connected" FontSize="12" Foreground="{ThemeResource SoftText}" VerticalAlignment="Center"/>
+    <TextBlock x:Name="TitleText" Text="Bandwave" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
+    <TextBlock x:Name="TitleState" Text="" FontSize="12" Foreground="{ThemeResource SoftText}" VerticalAlignment="Center"/>
    </StackPanel>
    <Button x:Name="UpdateButton" Grid.Column="2" Height="32" Padding="12,0" Margin="0,0,6,0" VerticalAlignment="Center" Visibility="Collapsed" AutomationProperties.Name="Install the update"/>
    <Button x:Name="SettingsButton" Grid.Column="3" Width="44" Height="44" Background="Transparent" AutomationProperties.Name="Settings" CornerRadius="0"><FontIcon Glyph="&#xE713;" FontSize="15"/></Button>
@@ -104,7 +104,6 @@
      <TextBlock x:Name="OfflineBody" FontSize="13" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource SoftText}" Text="Take them out of the case and check they're connected to this PC in Bluetooth settings. They take one controller at a time, so close Sony's app on your phone."/>
      <TextBlock x:Name="OfflineSeen" FontSize="12" TextWrapping="Wrap" TextAlignment="Center" Foreground="{ThemeResource SoftText}" Visibility="Collapsed"/>
      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Margin="0,6,0,0">
-      <Button x:Name="OfflineReconnect" Content="Reconnect" Height="36" Padding="16,0"/>
       <Button x:Name="OfflineBluetooth" Content="Bluetooth settings" Height="36" Padding="16,0"/>
      </StackPanel>
     </StackPanel>
@@ -279,12 +278,29 @@
      <TextBlock x:Name="SettingsOffline" Grid.ColumnSpan="3" Text="Connect your earbuds to change their settings." FontSize="15" Foreground="{ThemeResource SoftText}" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,260,0,0" Visibility="Collapsed"/>
      <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" Margin="0,18,0,0">
       <Button x:Name="ConnectionsButton" Content="Connections" Height="44" Padding="18,0"/>
-      <Button x:Name="AppButton" Content="App and widget" Height="44" Padding="18,0"/>
       <Button x:Name="AboutButton" Content="About" Height="44" Padding="18,0"/>
      </StackPanel>
     </Grid>
    </ScrollViewer>
    <Canvas x:Name="SettingsLines" IsHitTestVisible="False"/>
+  </Grid>
+
+  <!-- Devices: the app's home (0.10.0). Every paired Sony device as a glass tile over the resting
+       waves, which belong to MainPage and stay visible underneath. The app's own settings live here. -->
+  <Grid x:Name="DevicesPage" Grid.Row="1" Visibility="Collapsed">
+   <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+   <ScrollViewer x:Name="DevicesScroll" HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Auto" VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Disabled" HorizontalAlignment="Center" VerticalAlignment="Center" Padding="28,0,28,16">
+    <StackPanel x:Name="DeviceTiles" Orientation="Horizontal" Spacing="12"/>
+   </ScrollViewer>
+   <StackPanel x:Name="DevicesEmpty" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
+    <TextBlock Text="No Sony earbuds or headphones are paired with this PC." FontSize="15" Foreground="{ThemeResource SoftText}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"/>
+    <Button x:Name="DevicesBluetooth" Content="Open Bluetooth settings" Height="36" Padding="16,0" HorizontalAlignment="Center"/>
+   </StackPanel>
+   <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" Margin="0,0,0,28">
+    <Button x:Name="AppButton" Content="App" Height="44" Padding="18,0"/>
+    <Button x:Name="WidgetButton" Content="Widget" Height="44" Padding="18,0"/>
+    <Button x:Name="AppAboutButton" Content="About" Height="44" Padding="18,0"/>
+   </StackPanel>
   </Grid>
  </Grid>
 

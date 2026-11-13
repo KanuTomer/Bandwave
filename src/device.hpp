@@ -6,6 +6,7 @@
 #include <mdr-c/Headphones.h>
 #include <mdr-bt/ConnectionWindows.h>
 #include "event_transport.hpp"
+#include "sony_devices.hpp"
 #include <chrono>
 #include <array>
 #include <cstdio>
@@ -43,44 +44,20 @@ static void check(MDRResult result, const char* operation) {
 
 // Paired earbuds that Windows has not connected: wait for the link instead of retrying.
 struct NotConnected : std::runtime_error { using std::runtime_error::runtime_error; };
-struct Device { std::string address; bool connected; };
-static Device find_earbuds() {
-    BLUETOOTH_FIND_RADIO_PARAMS params{sizeof(params)};
-    HANDLE radio{};
-    auto radios = BluetoothFindFirstRadio(&params, &radio);
-    if (!radios) throw std::runtime_error("No available Bluetooth radio. Check Windows Bluetooth settings.");
-    std::vector<Device> matches;
-    do {
-        BLUETOOTH_DEVICE_SEARCH_PARAMS search{};
-        search.dwSize = sizeof(search);
-        search.fReturnAuthenticated = TRUE;
-        search.fReturnRemembered = TRUE;
-        search.fReturnConnected = TRUE;
-        search.fIssueInquiry = FALSE;
-        search.hRadio = radio;
-        BLUETOOTH_DEVICE_INFO info{sizeof(info)};
-        auto devices = BluetoothFindFirstDevice(&search, &info);
-        if (devices) {
-            do {
-                if (_wcsicmp(info.szName, L"WF-C710N") != 0) continue;
-                const auto* b = info.Address.rgBytes;
-                char address[18]{};
-                snprintf(address, sizeof(address), "%02X:%02X:%02X:%02X:%02X:%02X", b[5],b[4],b[3],b[2],b[1],b[0]);
-                bool duplicate = false;
-                for (const auto& d : matches) duplicate |= d.address == address;
-                if (!duplicate) matches.push_back({address, info.fConnected != FALSE});
-            } while (BluetoothFindNextDevice(devices, &info));
-            BluetoothFindDeviceClose(devices);
-        }
-        CloseHandle(radio);
-    } while (BluetoothFindNextRadio(radios, &radio));
-    BluetoothFindRadioClose(radios);
-    if (matches.empty()) throw std::runtime_error("WF-C710N is not paired. Pair it in Windows Bluetooth settings.");
-    if (matches.size() != 1) throw std::runtime_error("More than one WF-C710N is paired. Explicit device selection is required.");
-    if (!matches[0].connected) throw NotConnected("WF-C710N is paired but not connected. Connect it manually, then run the probe again.");
-    return matches[0];
+// The paired Sony device at `address`, as Windows has it now. Windows connects it; this only looks.
+static bandwave::PairedDevice find_device(const std::string& address) {
+    for (auto& device : bandwave::list_paired_sony()) if (device.address == address) {
+        if (!device.connected) throw NotConnected("The device is paired but Windows has not connected it.");
+        return device;
+    }
+    throw NotConnected("The device is not paired with this PC.");
 }
-
+// One control session per device: the lock that keeps the app and the probe apart is the device's own.
+static std::wstring transport_lock_name(const std::wstring& sid, const std::string& address) {
+    std::wstring name = L"Local\\EarbudControls.Transport." + sid + L".";
+    for (char c : address) if (c != ':') name += static_cast<wchar_t>(c);
+    return name;
+}
 struct Session {
     HANDLE transport_owner{};
     MDRConnectionWindows* classic{};
@@ -132,25 +109,26 @@ struct Session {
         throw std::runtime_error("Protocol operation timed out (sent=" + std::to_string(tx) + ", received=" + std::to_string(rx) + "); no automatic retry was attempted.");
     }
     HANDLE wait_handle() const {return event_classic?event_classic->event():nullptr;}
-    void connect(const Device& device, bool use_ble, bool v1, bool event_driven=false) {
+    void connect(const std::string& address, bandwave::Transport transport, std::string_view reported_model, bool event_driven=false) {
+        const bool use_ble = transport == bandwave::Transport::Ble, v1 = transport == bandwave::Transport::ClassicV1;
         HANDLE token{};
         if(!OpenProcessToken(GetCurrentProcess(),TOKEN_QUERY,&token))throw std::runtime_error("Could not identify the current Windows user.");
         DWORD bytes{};GetTokenInformation(token,TokenUser,nullptr,0,&bytes);std::vector<BYTE> user(bytes);
         BOOL identified=GetTokenInformation(token,TokenUser,user.data(),bytes,&bytes);CloseHandle(token);
         LPWSTR sid{};
         if(!identified || !ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid,&sid))throw std::runtime_error("Could not identify the current Windows user.");
-        auto owner_name=std::wstring(L"Local\\EarbudControls.Transport.")+sid;LocalFree(sid);
+        auto owner_name=transport_lock_name(sid,address);LocalFree(sid);
         HANDLE owner=CreateMutexW(nullptr,FALSE,owner_name.c_str());
         if(!owner)throw std::runtime_error("Could not create the Bluetooth connection lock.");
         auto acquired=WaitForSingleObject(owner,0);
-        if(acquired!=WAIT_OBJECT_0 && acquired!=WAIT_ABANDONED){CloseHandle(owner);throw std::runtime_error("Another Bandwave instance or hardware probe owns the connection. Close its controls and wait 15 seconds before retrying.");}
+        if(acquired!=WAIT_OBJECT_0 && acquired!=WAIT_ABANDONED){CloseHandle(owner);throw std::runtime_error("In use: another Bandwave instance or hardware probe holds this device's controls.");}
         transport_owner=owner;
         if(event_driven&&!use_ble){event_classic=std::make_unique<EventClassicTransport>();connection=&event_classic->api;}
         else if (use_ble) { ble = mdrConnectionWindowsBLECreate(); if (ble) connection = mdrConnectionWindowsBLEGet(ble); }
         else { classic = mdrConnectionWindowsCreate(); if (classic) connection = mdrConnectionWindowsGet(classic); }
         if (!connection) throw std::runtime_error("Could not create Bluetooth transport.");
         auto start = Clock::now();
-        auto result = mdrConnectionConnect(connection, device.address.c_str(), use_ble ? MDR_SERVICE_UUID_BLE : v1 ? MDR_SERVICE_UUID_V1 : MDR_SERVICE_UUID_V2);
+        auto result = mdrConnectionConnect(connection, address.c_str(), use_ble ? MDR_SERVICE_UUID_BLE : v1 ? MDR_SERVICE_UUID_V1 : MDR_SERVICE_UUID_V2);
         if (result != MDR_RESULT_OK && result != MDR_RESULT_INPROGRESS)
             throw std::runtime_error("Connect: " + std::string(mdrConnectionGetLastError(connection)));
         while (result == MDR_RESULT_INPROGRESS && Clock::now() - start < 5s) {
@@ -171,7 +149,7 @@ struct Session {
         check(mdrHeadphonesSetTimeout(headphones, MDR_TIMEOUT_DEFAULT, 3000), "Set command timeout");
         check(mdrHeadphonesRequestInit(headphones), "Initialize");
         until(MDR_EVENT_INITIALIZE_COMPLETE, 5s);
-        if (text(MDR_TEXT_MODEL_NAME) != "WF-C710N") throw std::runtime_error("Unexpected or unverified model identity; no setting writes allowed.");
+        if (text(MDR_TEXT_MODEL_NAME) != reported_model) throw std::runtime_error("Unexpected or unverified model identity; no setting writes allowed.");
         check(mdrHeadphonesRequestSync(headphones), "Refresh batteries");
         until(MDR_EVENT_SYNC_COMPLETE, 3s);
     }

@@ -1,7 +1,7 @@
 #pragma once
 // Levels of what this PC is playing, split into the seven bands that light the background. It uses
 // WASAPI loopback on the default output. It never sees phone audio, and it hears the music before
-// the earbuds apply their EQ. It only listens when the default output is the WF-C710N, so other
+// the earbuds apply their EQ. It only listens when the default output is the open device, so other
 // speakers never light the app; review builds may accept any output. Adapted from Tribit Connect.
 #include <windows.h>
 #include <mmdeviceapi.h>
@@ -16,6 +16,7 @@
 #include <cmath>
 #include <complex>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -53,7 +54,15 @@ private:
     std::array<std::atomic<float>, kBands> levels_{};
     std::array<std::atomic<float>, kFine> fine_{};
 
-    static bool is_earbuds(IMMDevice* device) {
+    // The open device's name as Windows shows it, in capitals. Empty: nothing to listen to.
+    std::mutex name_mutex_; std::wstring device_name_;
+public:
+    void set_device(std::wstring name) {
+        std::transform(name.begin(), name.end(), name.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
+        std::lock_guard lock(name_mutex_); device_name_ = std::move(name);
+    }
+private:
+    bool is_earbuds(IMMDevice* device) {
         winrt::com_ptr<IPropertyStore> store;
         if (FAILED(device->OpenPropertyStore(STGM_READ, store.put()))) return false;
         PROPVARIANT name; PropVariantInit(&name);
@@ -61,7 +70,8 @@ private:
         if (SUCCEEDED(store->GetValue(PKEY_Device_FriendlyName, &name)) && name.vt == VT_LPWSTR && name.pwszVal) {
             std::wstring text = name.pwszVal;
             std::transform(text.begin(), text.end(), text.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
-            match = text.find(L"WF-C710N") != std::wstring::npos;
+            std::lock_guard lock(name_mutex_);
+            match = !device_name_.empty() && text.find(device_name_) != std::wstring::npos;
         }
         PropVariantClear(&name);
         return match;

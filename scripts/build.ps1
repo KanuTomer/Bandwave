@@ -13,7 +13,7 @@ if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
 & $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-probe EarbudControls EarbudControls.UI --parallel 2
 if ($LASTEXITCODE -ne 0) { throw 'Probe build failed.' }
 if($Check){
-    & $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-core-tests earbud-protocol-tests earbud-ui-model-tests earbud-library-tests earbud-ipc-tests --parallel 2
+    & $taskCmake --build (Join-Path $taskRoot 'build') --config $Configuration --target earbud-core-tests earbud-protocol-tests earbud-ui-model-tests earbud-library-tests earbud-ipc-tests earbud-model-tests earbud-device-store-tests --parallel 2
     if($LASTEXITCODE -ne 0){throw 'Core test build failed.'}
     $taskCtest=Join-Path (Split-Path $taskCmake -Parent) 'ctest.exe'
     & $taskCtest --test-dir (Join-Path $taskRoot 'build') -C $Configuration --output-on-failure

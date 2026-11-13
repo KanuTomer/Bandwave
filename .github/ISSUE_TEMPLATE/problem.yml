@@ -1,0 +1,42 @@
+name: Report a problem
+description: Something in Bandwave or its widget doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Please don't paste Bluetooth addresses or anything else personal.
+  - type: input
+    id: version
+    attributes:
+      label: Bandwave version
+      description: Shown in the app's settings.
+      placeholder: 0.10.0
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      placeholder: WF-C710N
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: false
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to see it
+    validations:
+      required: false

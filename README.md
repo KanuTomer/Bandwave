@@ -1,11 +1,27 @@
 # Bandwave
 
-**Bandwave** is a Windows 11 app and Win + W widget for Sony **WF-C710N** earbuds. Check
-the batteries, switch noise cancelling and ambient sound, and shape the sound with your own EQs,
-without reaching for your phone.
+**Bandwave** is a Windows 11 app and Win + W widget for Sony earbuds and headphones, starting with
+the **WF-C710N**. Check the batteries, switch noise cancelling and ambient sound, and shape the
+sound with your own EQs, without reaching for your phone.
 
 Bandwave was called Sound Connect until 0.9.0. Updating keeps your EQs and settings; add the
 widget again from Win + W afterwards.
+
+![Bandwave's Devices screen: a glass tile for the WF-C710N showing Connected, Ambient · Warm evenings and its batteries, and a tile for a WH-1000XM5 marked Not supported yet with Request support, over softly glowing sound lines](docs/images/devices.png)
+
+## What's new in 0.10
+
+- **Devices:** Bandwave opens on a screen listing every Sony device paired with your PC, each
+  shown as Connected or Not connected the way Windows has it, with its batteries and what's
+  playing (or when it was last seen). Open one to get its own screen.
+- **More than one device:** several Sony devices can be controlled at once. Each has its own
+  settings and its own EQ library.
+- **Request support:** a Sony device Bandwave doesn't support yet is listed anyway, with a link
+  that opens a GitHub issue for that model.
+- **A widget per device:** the widget follows the device you last opened. Add another and choose
+  **Customize** in its menu to keep it on one device.
+- **App, Widget and About** sit at the bottom of the Devices screen; a device's Settings holds only
+  its own settings.
 
 ![Bandwave's main screen with music playing: fifteen glowing sound lines in the music's colour above the battery levels, the three sound modes and six EQs](docs/images/main.png)
 
@@ -17,9 +33,8 @@ widget again from Win + W afterwards.
   the tray Bandwave draws nothing at all.
 - **Fits your music:** the lines and the colour learn what you usually listen to, so quiet acoustic
   tracks move them as much as loud electronic ones, and every colour gets its turn: blue when the
-  vocals lead, red when the bass does. Choose **Calm**, **Balanced** or **Lively** in Settings >
-  App and widget. Rest the pointer on the choice and Settings steps aside to show the waves moving
-  with your music, so you can see the difference before you leave.
+  vocals lead, red when the bass does. Choose **Calm**, **Balanced** or **Lively** in **App** on the
+  Devices screen.
 - **See everything at a glance:** left, right and case batteries, and whether each earbud is
   connected. While the earbuds aren't connected, the controls and the EQ library rest, so nothing
   here drifts from what your phone may have changed on them.
@@ -46,9 +61,16 @@ widget again from Win + W afterwards.
   and hearing your own voice on calls. Only the settings your earbuds offer are shown, and the
   page fits smaller windows.
 - **Use the widget:** batteries, sound mode and your six main EQs in Win + W, without opening
-  the app.
-- **Start with Windows and keep it in the tray,** if you like. Both are in Settings > App and
-  widget.
+  the app. It shows the device you last opened; add a second widget and choose **Customize** in
+  its menu to keep it on one device. **Widget** on the Devices screen says what Windows needs
+  before it shows the widget.
+- **Several Sony devices:** each supported device has its own screen, settings and EQs.
+  Pairing, connecting and forgetting stay in Windows Bluetooth settings: Bandwave only shows what
+  Windows reports, and never connects or disconnects anything itself.
+- **Let Sony's phone app connect:** Bandwave can step aside 15 seconds after its window and
+  widget close, so the phone app can take the controls. Turn it on in **App**.
+- **Start with Windows and keep it in the tray,** if you like. Both are in **App** on the
+  Devices screen.
 
 | The library | Editing an EQ | Hold to compare |
 |---|---|---|
@@ -62,15 +84,17 @@ widget again from Win + W afterwards.
 
 1. Turn on **Developer Mode** in Windows Settings > System > For developers. Windows only shows
    widgets from apps outside the Microsoft Store when it's on.
-2. Pair your WF-C710N in Windows Bluetooth settings.
-3. Download **EarbudControls-Setup-0.9.0.exe** from
-   [Releases](https://github.com/KanuTomer/Sound-Connect/releases) and run it. It installs the
+2. Pair your Sony earbuds in Windows Bluetooth settings.
+3. Download **EarbudControls-Setup-0.10.4.exe** from
+   [Releases](https://github.com/KanuTomer/Bandwave/releases) and run it. It installs the
    app and the widget together.
 4. Open **Bandwave** from Start. To add the widget, open Win + W, choose Add widgets, then
-   **WF-C710N**.
+   **Bandwave**. If it isn't listed, **Widget** on the Devices screen says what's missing.
 
 **Requirements:** Windows 11 x64, version 22H2 or newer, with the Windows Web Experience Pack
-(for Widgets). Other earbud models and ARM64 PCs aren't supported.
+(for Widgets). The WF-C710N is the only supported model so far: other Sony devices are listed with
+**Request support**, and a model is added once it can be tested on the real device. ARM64 PCs
+aren't supported.
 
 **About the certificate:** Bandwave is signed with the project's own certificate. The
 first install asks for administrator permission once, only to trust that certificate; nothing
@@ -80,13 +104,21 @@ Setup also installs Microsoft's Windows App Runtime if your PC doesn't already h
 
 ## Updates
 
+**Updating from 0.9.0:** 0.9.0 can't update itself to 0.10, because the project's GitHub address
+changed. Download and run the 0.10 setup once; your EQs and settings are kept and copied to the
+device they belong to. Later versions update as usual.
+
 Bandwave checks for a new version once a day. When one is out, choose **Update** in the
 title bar: it downloads, checks the file's checksum and signature, and updates in place,
-keeping your EQs and settings. To look straight away, choose **Check now** in Settings > App and
-widget, where you can also turn the daily check off. Running a newer setup yourself works the
+keeping your EQs and settings. To look straight away, choose **Check now** in App on the Devices
+screen, where you can also turn the daily check off. Running a newer setup yourself works the
 same way. A copy from the Microsoft Store is updated by the Store instead.
 
 ## Good to know
+
+Bandwave never connects, disconnects or switches audio between devices: Windows does. If a device
+is connected but its controls are held by Sony's phone app, Bandwave says so and picks them up
+again by itself.
 
 Changing **Connect to two devices at once** makes the earbuds drop every connection and reconnect;
 your phone may need reconnecting from its Bluetooth settings. Bandwave asks before it
@@ -101,9 +133,11 @@ changes your Bluetooth pairing or anything stored on the earbuds.
 ## Privacy
 
 Bandwave has no account and sends no telemetry. Your EQs and settings stay on your PC, in
-`%LOCALAPPDATA%\Earbud Controls`. To fit the waves to your music it keeps 14 numbers there (how
+`%LOCALAPPDATA%\Earbud Controls`, one folder per device. To fit the waves to your music it keeps 14 numbers there (how
 loud each frequency range usually is), never what you played. The only network request is the
-update check to this project's GitHub Releases, which sends nothing about you.
+update check to this project's GitHub Releases, which sends nothing about you. **Request support**
+and **Report a problem** only open a GitHub page in your browser when you click them; the only
+thing they fill in is a model name.
 
 ## Build from source
 
