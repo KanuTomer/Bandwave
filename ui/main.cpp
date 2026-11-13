@@ -287,7 +287,8 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             file.imbue(std::locale(".UTF-8"));
             std::wstringstream source;
             source << file.rdbuf();
-            root = Markup::XamlReader::Load(hstring(source.str())).as<Grid>();
+            dusk_xaml = source.str(); // kept: device tiles copy the battery icons from it
+            root = Markup::XamlReader::Load(hstring(dusk_xaml)).as<Grid>();
             Windows::UI::ViewManagement::UISettings ui;
             animations = ui.AnimationsEnabled() && !render_review;
             if (render_review) glow_level = 1; // exports stand in for music playing
@@ -1614,7 +1615,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     }
     // ---------- App, Widget and About, on Devices ----------
     // Nothing here changes Windows: the buttons only open its own pages.
-    int widgets_pinned = 0; bool release_when_hidden = false;
+    int widgets_pinned = 0; bool release_when_hidden = false; std::wstring dusk_xaml;
     static bool developer_mode() {
         DWORD value = 0, size = sizeof(value);
         return RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock", L"AllowDevelopmentWithoutDevLicense", RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS && value != 0;
@@ -2223,6 +2224,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
     struct DeviceItem {
         std::string address; std::wstring name, display, form, control, request;
         bool supported{}, connected{}, ready{}; std::array<int, 3> batteries{-1, -1, -1}; // left, right, case
+        int noise = -1; std::wstring eq; int64_t seen = 0; // sound mode and EQ playing; when last read
     };
     std::vector<DeviceItem> device_list; bool devices_known = false;
     std::map<std::string, std::string> snapshots; // each device's latest report, by address
@@ -2257,66 +2259,116 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         }
         return url;
     }
+    // The device screen's own battery icon (left earbud, case, right earbud), copied from Dusk.xaml so
+    // the tile and the screen can never drift apart. which: 0 left, 1 case, 2 right.
+    FrameworkElement battery_icon(int which, double scale) {
+        static constexpr const wchar_t* panels[]{L"x:Name=\"BatteryLeft\"", L"x:Name=\"BatteryCase\"", L"x:Name=\"BatteryRight\""};
+        const auto from = dusk_xaml.find(panels[which]);
+        const auto start = from == std::wstring::npos ? from : dusk_xaml.find(L"<Viewbox", from);
+        const auto end = start == std::wstring::npos ? start : dusk_xaml.find(L"</Viewbox>", start);
+        if (end == std::wstring::npos) return Grid{};
+        auto markup = dusk_xaml.substr(start, end + 10 - start);
+        markup.insert(8, L" xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"");
+        auto icon = Markup::XamlReader::Load(hstring(markup)).as<Viewbox>();
+        icon.Width(icon.Width() * scale); icon.Height(icon.Height() * scale);
+        icon.Margin(ThicknessHelper::FromLengths(0, 5, 0, 0));
+        return icon;
+    }
+    // The device screen's battery block, smaller: thin numbers, 3px bars, and the icons under them.
+    // An earbud with no reading while the device is connected isn't connected, as on the device screen.
     FrameworkElement battery_readings(DeviceItem const& d) {
-        StackPanel row; row.Orientation(Orientation::Horizontal); row.Spacing(14);
-        // Earbuds: left, case, right, as on the device's own screen. Headphones have one battery.
-        const std::vector<int> values = d.form == L"headphones" ? std::vector<int>{d.batteries[0]} : std::vector<int>{d.batteries[0], d.batteries[2], d.batteries[1]};
-        for (int value : values) {
-            const bool known = value > 0 && value <= 100;
-            StackPanel cell; cell.Width(34); cell.Spacing(5);
-            TextBlock number; number.Text(known ? std::to_wstring(value) : L"—"); number.FontFamily(FontFamily(L"Segoe UI Variable Display")); number.FontWeight(Windows::UI::Text::FontWeights::Light()); number.FontSize(20); number.HorizontalAlignment(HorizontalAlignment::Center);
-            Grid bar; bar.Height(2); bar.Background(brush(0xFFFFFF, .18));
-            Border level; level.Height(2); level.Width(known ? 34.0 * value / 100 : 0); level.HorizontalAlignment(HorizontalAlignment::Left); level.Background(brush(0xF2F2F2));
-            bar.Children().Append(level);
+        Grid row;
+        const bool headphones = d.form == L"headphones";
+        const std::vector<int> order = headphones ? std::vector<int>{0} : std::vector<int>{0, 2, 1}; // left, case, right
+        // As on the device screen, the earbuds' columns are wider than the case's, so "Not connected" fits.
+        for (size_t i = 0; i < order.size(); ++i) { ColumnDefinition c; c.Width(i == 1 ? GridLengthHelper::FromPixels(56) : GridLengthHelper::FromValueAndType(1, GridUnitType::Star)); row.ColumnDefinitions().Append(c); }
+        for (size_t i = 0; i < order.size(); ++i) {
+            const int slot = order[i], value = d.batteries[static_cast<size_t>(slot)];
+            const bool known = value > 0 && value <= 100, bud = slot != 2, away = d.connected && d.ready && bud && !headphones && !known;
+            StackPanel cell; cell.Spacing(3); cell.HorizontalAlignment(HorizontalAlignment::Center);
+            TextBlock number; number.HorizontalAlignment(HorizontalAlignment::Center);
+            if (away) { number.Text(L"Not connected"); number.FontSize(12); number.Height(32); number.Padding(ThicknessHelper::FromLengths(0, 9, 0, 0)); number.Foreground(theme_brush(L"SoftText")); }
+            else { number.Text(known ? std::to_wstring(value) : L"—"); number.FontFamily(FontFamily(L"Segoe UI Variable Display")); number.FontWeight(Windows::UI::Text::FontWeights::Light()); number.FontSize(28); number.Height(32); }
+            Grid bar; bar.Width(52); bar.Height(3); bar.HorizontalAlignment(HorizontalAlignment::Center);
+            Border track; track.Background(brush(0xFFFFFF, .2)); track.CornerRadius(CornerRadiusHelper::FromUniformRadius(1.5));
+            Border level; level.Width(known ? 52.0 * value / 100 : 0); level.HorizontalAlignment(HorizontalAlignment::Left); level.Background(brush(0xF2F2F2)); level.CornerRadius(CornerRadiusHelper::FromUniformRadius(1.5));
+            bar.Children().Append(track); bar.Children().Append(level);
             cell.Children().Append(number); cell.Children().Append(bar);
-            row.Children().Append(cell);
+            if (!headphones) cell.Children().Append(battery_icon(slot == 0 ? 0 : slot == 2 ? 1 : 2, .75));
+            static constexpr const wchar_t* names[]{L"Left earbud", L"Right earbud", L"Case"};
+            Automation::AutomationProperties::SetName(cell, std::wstring(headphones ? L"Battery" : names[slot]) + (known ? L" " + std::to_wstring(value) + L" percent" : away ? L", not connected" : L", unknown"));
+            Grid::SetColumn(cell, static_cast<int>(i)); row.Children().Append(cell);
         }
         return row;
     }
+    // One quiet line under the status: what's playing while connected, else when it was last seen.
+    static std::wstring device_now(DeviceItem const& d) {
+        if (d.connected && d.ready) {
+            const wchar_t* mode = d.noise == 1 ? L"Noise cancelling" : d.noise == 2 ? L"Ambient" : d.noise == 0 ? L"Off" : nullptr;
+            if (mode && !d.eq.empty()) return std::wstring(mode) + L" · " + d.eq;
+            return mode ? std::wstring(mode) : d.eq;
+        }
+        if (d.connected || !d.seen) return {};
+        std::tm local{}; const std::time_t at = d.seen; localtime_s(&local, &at);
+        std::tm today{}; const std::time_t now = std::time(nullptr); localtime_s(&today, &now);
+        wchar_t text[64]{};
+        wcsftime(text, 64, local.tm_yday == today.tm_yday && local.tm_year == today.tm_year ? L"Last seen %I:%M %p" : L"Last seen %d %b", &local);
+        std::wstring out = text;
+        if (auto zero = out.find(L" 0"); zero != std::wstring::npos && zero == 9) out.erase(zero + 1, 1); // 02:40 PM -> 2:40 PM
+        return out;
+    }
     FrameworkElement device_tile(DeviceItem const& d) {
         Grid layout;
-        for (auto height : {GridLengthHelper::FromPixels(112), GridLengthHelper::Auto(), GridLengthHelper::Auto(), GridLengthHelper::FromValueAndType(1, GridUnitType::Star), GridLengthHelper::Auto()}) { RowDefinition r; r.Height(height); layout.RowDefinitions().Append(r); }
+        for (auto height : {GridLengthHelper::FromPixels(124), GridLengthHelper::Auto(), GridLengthHelper::Auto(), GridLengthHelper::Auto(), GridLengthHelper::FromValueAndType(1, GridUnitType::Star), GridLengthHelper::Auto()}) { RowDefinition r; r.Height(height); layout.RowDefinitions().Append(r); }
         if (d.supported && d.form != L"headphones") { // art exists for earbuds; other shapes get theirs with their profile
-            StackPanel art; art.Orientation(Orientation::Horizontal); art.Spacing(6); art.HorizontalAlignment(HorizontalAlignment::Center); art.VerticalAlignment(VerticalAlignment::Center);
-            Viewbox left; left.Height(66); left.Child(bud_art(L"bud-left.png"));
-            Viewbox right; right.Height(66); right.Child(bud_art(L"bud-right.png")); right.RenderTransformOrigin({.5f, .5f}); ScaleTransform mirror; mirror.ScaleX(-1); right.RenderTransform(mirror);
+            StackPanel art; art.Orientation(Orientation::Horizontal); art.Spacing(10); art.HorizontalAlignment(HorizontalAlignment::Center); art.VerticalAlignment(VerticalAlignment::Center);
+            Viewbox left; left.Height(92); left.Child(bud_art(L"bud-left.png"));
+            Viewbox right; right.Height(92); right.Child(bud_art(L"bud-right.png")); right.RenderTransformOrigin({.5f, .5f}); ScaleTransform mirror; mirror.ScaleX(-1); right.RenderTransform(mirror);
             art.Children().Append(left); art.Children().Append(right);
             Automation::AutomationProperties::SetAccessibilityView(art, Automation::Peers::AccessibilityView::Raw);
             layout.Children().Append(art);
         }
+        // The app's own sizes: a light 24 heading (as Settings' groups), and body text at 13.
         const auto title = d.supported ? device_title(d) : d.name;
-        TextBlock name; name.Text(title); name.FontSize(16); name.TextTrimming(TextTrimming::CharacterEllipsis); name.Margin(ThicknessHelper::FromLengths(0, 10, 0, 0));
+        TextBlock name; name.Text(title); name.FontFamily(FontFamily(L"Segoe UI Variable Display")); name.FontWeight(Windows::UI::Text::FontWeights::Light()); name.FontSize(24);
+        name.TextTrimming(TextTrimming::CharacterEllipsis); name.Margin(ThicknessHelper::FromLengths(0, 12, 0, 0));
         Grid::SetRow(name, 1); layout.Children().Append(name);
-        TextBlock status; status.Text(device_status(d)); status.FontSize(12); status.TextWrapping(TextWrapping::Wrap); status.Foreground(theme_brush(L"SoftText"));
+        TextBlock status; status.Text(device_status(d)); status.FontSize(13); status.TextWrapping(TextWrapping::Wrap); status.Margin(ThicknessHelper::FromLengths(0, 2, 0, 0));
         Grid::SetRow(status, 2); layout.Children().Append(status);
-        const double dim = d.connected ? 1 : .5; // a device Windows hasn't connected rests
+        if (const auto now = d.supported ? device_now(d) : std::wstring(); !now.empty()) {
+            TextBlock line; line.Text(now); line.FontSize(13); line.TextTrimming(TextTrimming::CharacterEllipsis); line.Foreground(theme_brush(L"SoftText")); line.Opacity(.75);
+            Grid::SetRow(line, 3); layout.Children().Append(line);
+        }
+        const double dim = d.connected ? 1 : .6; // a device Windows hasn't connected rests
+        auto glass = [this](auto const& tile) {
+            tile.Width(260); tile.Height(372); tile.Padding(ThicknessHelper::FromLengths(22, 20, 22, 22)); tile.CornerRadius(CornerRadiusHelper::FromUniformRadius(8));
+            tile.Background(brush(0x121212, .86)); tile.BorderThickness(ThicknessHelper::FromUniformLength(0)); // no outline: nothing else in the app has one
+        };
         if (d.supported) {
-            auto batteries = battery_readings(d); Grid::SetRow(batteries, 4); layout.Children().Append(batteries);
-            Button tile; tile.Width(204); tile.Height(262); tile.Padding(ThicknessHelper::FromLengths(18, 18, 18, 16)); tile.CornerRadius(CornerRadiusHelper::FromUniformRadius(8));
+            auto batteries = battery_readings(d); Grid::SetRow(batteries, 5); layout.Children().Append(batteries);
+            Button tile; glass(tile);
             tile.HorizontalContentAlignment(HorizontalAlignment::Stretch); tile.VerticalContentAlignment(VerticalAlignment::Stretch);
-            tile.Background(brush(0x121212, .82)); tile.BorderBrush(theme_brush(L"RuleBrush")); tile.BorderThickness(ThicknessHelper::FromUniformLength(1));
             tile.Content(layout); tile.Opacity(dim);
             // The Button template replaces Background with ButtonBackgroundPointerOver on hover: the app's
             // #21FFFFFF is nearly clear, so the waves behind flashed through the glass. The tile keeps its own.
             auto own = tile.Resources();
-            own.Insert(box_value(L"ButtonBackgroundPointerOver"), brush(0x1A1A1A, .86));
-            own.Insert(box_value(L"ButtonBackgroundPressed"), brush(0x101010, .86));
-            own.Insert(box_value(L"ButtonBorderBrushPointerOver"), brush(0xFFFFFF, .22));
-            own.Insert(box_value(L"ButtonBorderBrushPressed"), theme_brush(L"RuleBrush"));
-            Automation::AutomationProperties::SetName(tile, title + L", " + device_status(d));
+            own.Insert(box_value(L"ButtonBackgroundPointerOver"), brush(0x1A1A1A, .88));
+            own.Insert(box_value(L"ButtonBackgroundPressed"), brush(0x101010, .88));
+            own.Insert(box_value(L"ButtonBorderBrushPointerOver"), brush(0xFFFFFF, 0));
+            own.Insert(box_value(L"ButtonBorderBrushPressed"), brush(0xFFFFFF, 0));
+            Automation::AutomationProperties::SetName(tile, title + L", " + device_status(d) + (device_now(d).empty() ? L"" : L", " + device_now(d)));
             tile.Click([this, address = d.address](auto&&, auto&&) { open_device(address); });
             return tile;
         }
-        StackPanel ask; ask.Spacing(2);
-        TextBlock why; why.Text(L"Not supported yet"); why.FontSize(12); why.Foreground(theme_brush(L"SoftText"));
-        HyperlinkButton request; request.Content(box_value(L"Request support ›")); request.FontSize(12); request.Padding(ThicknessHelper::FromLengths(0, 2, 0, 2)); request.Margin(ThicknessHelper::FromLengths(0, 0, 0, -4));
+        StackPanel ask; ask.Spacing(4);
+        TextBlock why; why.Text(L"Not supported yet"); why.FontSize(13); why.Foreground(theme_brush(L"SoftText")); why.Opacity(.75);
+        HyperlinkButton request; request.Content(box_value(L"Request support ›")); request.FontSize(13); request.Padding(ThicknessHelper::FromLengths(0, 2, 0, 2)); request.Margin(ThicknessHelper::FromLengths(0, 0, 0, -4));
         request.Foreground(brush(0xF2F2F2));
         Automation::AutomationProperties::SetName(request, L"Request support for " + title + L" on GitHub");
         request.Click([link = request_link(d.request)](auto&&, auto&&) { ShellExecuteW(nullptr, L"open", link.c_str(), nullptr, nullptr, SW_SHOWNORMAL); });
         ask.Children().Append(why); ask.Children().Append(request);
-        Grid::SetRow(ask, 4); layout.Children().Append(ask);
-        Border tile; tile.Width(204); tile.Height(262); tile.Padding(ThicknessHelper::FromLengths(18, 18, 18, 16)); tile.CornerRadius(CornerRadiusHelper::FromUniformRadius(8));
-        tile.Background(brush(0x121212, .82)); tile.BorderBrush(theme_brush(L"RuleBrush")); tile.BorderThickness(ThicknessHelper::FromUniformLength(1));
+        Grid::SetRow(ask, 5); layout.Children().Append(ask);
+        Border tile; glass(tile);
         tile.Child(layout); tile.Opacity(dim);
         return tile;
     }
@@ -2334,6 +2386,7 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
             DeviceItem d{to_string(o.GetNamedString(L"address", L"")), std::wstring(o.GetNamedString(L"name", L"")), std::wstring(o.GetNamedString(L"displayName", L"")), std::wstring(o.GetNamedString(L"form", L"buds")),
                 std::wstring(o.GetNamedString(L"control", L"idle")), std::wstring(o.GetNamedString(L"request", L"")), o.GetNamedBoolean(L"supported", false), o.GetNamedBoolean(L"connected", false), o.GetNamedBoolean(L"ready", false)};
             if (o.HasKey(L"batteries")) { auto b = o.GetNamedArray(L"batteries"); for (uint32_t i = 0; i < 3 && i < b.Size(); ++i) d.batteries[i] = static_cast<int>(b.GetNumberAt(i)); }
+            d.noise = static_cast<int>(o.GetNamedNumber(L"noise", -1)); d.eq = std::wstring(o.GetNamedString(L"eq", L"")); d.seen = static_cast<int64_t>(o.GetNamedNumber(L"checked", 0));
             if (!d.address.empty()) device_list.push_back(std::move(d));
         }
         devices_known = true;
@@ -2952,9 +3005,9 @@ struct DuskApp : ApplicationT<DuskApp, Markup::IXamlMetadataProvider> {
         if (review_view == L"Settings") navigate(L"Settings");
         // Devices: two of one model (one renamed, away) and two Sony models without a profile.
         if (review_view == L"Devices" || review_view == L"DevicesOne" || review_view == L"DevicesEmpty") {
-            if (review_view != L"DevicesEmpty") device_list.push_back({"F0:00:00:00:00:01", L"WF-C710N", L"WF-C710N", L"buds", L"ready", L"", true, true, true, {82, 79, 61}});
+            if (review_view != L"DevicesEmpty") { device_list.push_back({"F0:00:00:00:00:01", L"WF-C710N", L"WF-C710N", L"buds", L"ready", L"", true, true, true, {-1, 70, 50}}); device_list.back().noise = 2; device_list.back().eq = L"Warm evenings"; }
             if (review_view == L"Devices") {
-                device_list.push_back({"F0:00:00:00:00:02", L"Kanu's buds", L"WF-C710N", L"buds", L"idle", L"", true, false, false, {60, 80, 55}});
+                device_list.push_back({"F0:00:00:00:00:02", L"Kanu's buds", L"WF-C710N", L"buds", L"idle", L"", true, false, false, {60, 55, 80}}); device_list.back().seen = static_cast<int64_t>(std::time(nullptr)) - 3600;
                 device_list.push_back({"F0:00:00:00:00:03", L"WH-1000XM5", L"WH-1000XM5", L"buds", L"idle", L"WH-1000XM5", false, true, false, {-1, -1, -1}});
                 device_list.push_back({"F0:00:00:00:00:04", L"WF-1000XM4", L"WF-1000XM4", L"buds", L"idle", L"WF-1000XM4", false, false, false, {-1, -1, -1}});
             }

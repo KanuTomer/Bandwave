@@ -413,6 +413,18 @@ public:
         {std::lock_guard lock(link_mutex);if(outbox.size()>64)outbox.pop_front();outbox.push_back(earbud::ipc::frame(winrt::to_string(message.Stringify())));}
         SetEvent(outbox_event);
     }
+    // The EQ a device is playing, by the name the app shows: one of its EQs when the device holds
+    // exactly that (a Sony preset, or Manual with that curve), else Sony's own preset name.
+    static winrt::hstring playing_eq(DeviceState* d,const Snapshot& s){
+        if(!d||!s.eq_supported)return {};
+        for(auto& p:d->library.profiles){
+            if(p.kind==earbud::ProfileKind::Sony){if(s.preset!=MDR_EQ_CUSTOM&&s.preset==p.preset)return winrt::hstring(p.name);continue;}
+            if(s.preset!=MDR_EQ_CUSTOM||s.bands.size()!=5||s.bass!=p.clear_bass)continue;
+            bool same=true;for(size_t b=0;b<5;++b)same=same&&s.bands[b]==p.bands[b];
+            if(same)return winrt::hstring(p.name);
+        }
+        return s.preset==MDR_EQ_CUSTOM?winrt::hstring():winrt::to_hstring(preset_name(s.preset));
+    }
     static JsonArray battery_list(const Snapshot& s){JsonArray list;for(int value:s.batteries)list.Append(JsonValue::CreateNumberValue(value));return list;}
     // The Devices screen's list: every paired Sony device, supported or not, as Windows has it.
     void send_devices(bool force=false){
@@ -436,6 +448,10 @@ public:
             item.SetNamedValue(L"control",JsonValue::CreateStringValue(winrt::to_hstring(control_name(s.control))));
             item.SetNamedValue(L"ready",JsonValue::CreateBooleanValue(s.ready&&s.fresh));
             item.SetNamedValue(L"batteries",battery_list(s));
+            const bool live=s.ready&&s.fresh;
+            item.SetNamedValue(L"noise",JsonValue::CreateNumberValue(live&&s.noise_supported?s.noise:-1));
+            item.SetNamedValue(L"eq",JsonValue::CreateStringValue(live?playing_eq(device(p.address),s):winrt::hstring()));
+            item.SetNamedValue(L"checked",JsonValue::CreateNumberValue(static_cast<double>(s.checked)));
             list.Append(item);
         }
         j.SetNamedValue(L"list",list);
